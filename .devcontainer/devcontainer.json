@@ -1,0 +1,53 @@
+{
+  "name": "eBPF CGroup Firewall",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  // Let us test cgroups in the codespace. See: https://www.whexy.com/posts/cgroup-inside-containers
+  "runArgs": [
+    // Use host user namespace
+    "--userns=host",
+    // Use host cgroup namespace
+    "--cgroupns=host",
+    // Run with elevated privileges
+    "--privileged",
+    "--pid=host"
+  ],
+  "mounts": [
+    {
+      "source": "/sys/fs/cgroup",
+      "target": "/sys/fs/cgroup",
+      "type": "bind"
+    }
+  ],
+  "containerUser": "root", // Lets us develop and test against systemd stuff
+  "remoteUser": "root",
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    },
+    "vscode": {
+      "extensions": [
+        "bierner.markdown-preview-github-styles",
+        "davidanson.vscode-markdownlint",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "github.copilot",
+        "github.copilot-chat",
+        "github.vscode-github-actions",
+        "github.vscode-pull-request-github",
+        "redhat.vscode-yaml",
+        "yzhang.markdown-all-in-one",
+        "golang.go",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+  "remoteEnv": {
+    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  }
+}

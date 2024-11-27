@@ -1,0 +1,21 @@
+#!/bin/bash 
+
+set -e
+
+# Update package list and install common dependencies
+apt update
+# Used for eBPF compilation and DNS tooling
+apt install clang llvm libbpf-dev gcc-multilib dnsutils -y;
+
+# Required for eBPF compilation on Ubuntu vs Debian
+# Check the distribution and install the appropriate headers
+if [ -f /etc/debian_version ]; then
+    if grep -q "Ubuntu" /etc/os-release; then
+        apt install linux-generic -y;
+    else
+        apt install linux-headers-amd64 -y;
+    fi
+else
+    echo "Unsupported distribution"
+    exit 1
+fi
