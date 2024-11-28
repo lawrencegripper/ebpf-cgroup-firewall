@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strings"
 
 	"github.com/containerd/cgroups"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
@@ -46,10 +47,17 @@ func main() {
 	fmt.Println("Attaching to cgroup: ", cgroupPathForCurrentProcess)
 
 	// then attach the eBPF program to it
-	err = ebpf.AttachRedirectorToCGroup(cgroupPathForCurrentProcess, dns.Port, os.Getpid())
+	ebpfFirewall, err := ebpf.AttachRedirectorToCGroup(cgroupPathForCurrentProcess, dns.Port, os.Getpid())
 	if err != nil {
 		fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
 		os.Exit(105)
+	}
+
+	downstreamDnsIP := strings.Split(dns.BlockingDNSHandler.DownstreamServerAddr, ":")[0]
+	err = ebpfFirewall.AllowIP(downstreamDnsIP)
+	if err != nil {
+		fmt.Printf("Failed to allow IP: %v\n", err)
+		os.Exit(109)
 	}
 
 	// Now lets wait and see what DNS request happen

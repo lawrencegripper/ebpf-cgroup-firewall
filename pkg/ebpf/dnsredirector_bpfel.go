@@ -59,14 +59,16 @@ type dnsredirectorSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type dnsredirectorProgramSpecs struct {
-	Connect4     *ebpf.ProgramSpec `ebpf:"connect4"`
-	Getpeername4 *ebpf.ProgramSpec `ebpf:"getpeername4"`
+	CgroupSkbEgress *ebpf.ProgramSpec `ebpf:"cgroup_skb_egress"`
+	Connect4        *ebpf.ProgramSpec `ebpf:"connect4"`
+	Getpeername4    *ebpf.ProgramSpec `ebpf:"getpeername4"`
 }
 
 // dnsredirectorMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type dnsredirectorMapSpecs struct {
+	AllowedIpsMap  *ebpf.MapSpec `ebpf:"allowed_ips_map"`
 	ServiceMapping *ebpf.MapSpec `ebpf:"service_mapping"`
 }
 
@@ -89,11 +91,13 @@ func (o *dnsredirectorObjects) Close() error {
 //
 // It can be passed to loadDnsredirectorObjects or ebpf.CollectionSpec.LoadAndAssign.
 type dnsredirectorMaps struct {
+	AllowedIpsMap  *ebpf.Map `ebpf:"allowed_ips_map"`
 	ServiceMapping *ebpf.Map `ebpf:"service_mapping"`
 }
 
 func (m *dnsredirectorMaps) Close() error {
 	return _DnsredirectorClose(
+		m.AllowedIpsMap,
 		m.ServiceMapping,
 	)
 }
@@ -102,12 +106,14 @@ func (m *dnsredirectorMaps) Close() error {
 //
 // It can be passed to loadDnsredirectorObjects or ebpf.CollectionSpec.LoadAndAssign.
 type dnsredirectorPrograms struct {
-	Connect4     *ebpf.Program `ebpf:"connect4"`
-	Getpeername4 *ebpf.Program `ebpf:"getpeername4"`
+	CgroupSkbEgress *ebpf.Program `ebpf:"cgroup_skb_egress"`
+	Connect4        *ebpf.Program `ebpf:"connect4"`
+	Getpeername4    *ebpf.Program `ebpf:"getpeername4"`
 }
 
 func (p *dnsredirectorPrograms) Close() error {
 	return _DnsredirectorClose(
+		p.CgroupSkbEgress,
 		p.Connect4,
 		p.Getpeername4,
 	)

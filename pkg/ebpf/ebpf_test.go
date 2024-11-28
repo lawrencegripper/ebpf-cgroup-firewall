@@ -45,7 +45,7 @@ func TestAttachRedirectorToCGroup_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0)
+			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0)
 			assert.EqualError(t, err, tt.expectedError)
 		})
 	}
@@ -60,7 +60,7 @@ func TestAttachRedirectorToCGroup_DoesNotImpactOtherTraffic(t *testing.T) {
 	cgroupPath := path.Join(cgroupDefault, cgroupName)
 
 	redirectDNSToPort := 55555
-	err = AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0)
+	_, err = AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0)
 	require.NoError(t, err)
 
 	// Start a http server to validate normal requests are not impacted
@@ -115,7 +115,7 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	cgroupPathForCurrentProcess = path.Join(cgroup2Mount.Mountpoint, cgroupPathForCurrentProcess)
 
 	redirectDNSToPort := 55555
-	err = AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0)
+	_, err = AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0)
 	require.NoError(t, err)
 
 	cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPathForCurrentProcess)

@@ -41,7 +41,7 @@ func StartDNSMonitoringProxy(domainsToBlock []string) (*DNSProxy, error) {
 	serverHandler := &blockingDNSHandler{
 		domainsToBlock:       domainsToBlock,
 		downstreamClient:     downstreamClient,
-		downstreamServerAddr: downstreamServerAddr,
+		DownstreamServerAddr: downstreamServerAddr,
 		DNSLog:               make(map[string]int),
 	}
 	server := &dns.Server{Addr: fmt.Sprintf(":%d", listenPort), Net: "udp", Handler: serverHandler}
@@ -142,7 +142,7 @@ type blockingDNSHandler struct {
 	DNSLog               map[string]int
 	dnsLogMu             sync.Mutex
 	downstreamClient     *dns.Client
-	downstreamServerAddr string
+	DownstreamServerAddr string
 }
 
 func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
@@ -189,9 +189,9 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Rcode = dns.RcodeRefused
 			fmt.Printf("Refused DNS query for domain %s, blocked because of %s\n", q.Name, blockedBecause)
 		} else {
-			resp, _, err := b.downstreamClient.Exchange(r, b.downstreamServerAddr)
+			resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)
 			if err != nil {
-				fmt.Printf("Failed to resolve from downstream: %v, domain: %s, downstream server: %s\n", err, q.Name, b.downstreamServerAddr)
+				fmt.Printf("Failed to resolve from downstream: %v, domain: %s, downstream server: %s\n", err, q.Name, b.DownstreamServerAddr)
 				m.Rcode = dns.RcodeServerFailure
 				continue
 			}

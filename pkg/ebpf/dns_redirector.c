@@ -17,12 +17,24 @@ struct svc_addr {
     __be16 port;
 };
 
+/* Map the original destination for dns requests to map back on response */
 struct {
     __uint(type, BPF_MAP_TYPE_SK_STORAGE);
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __type(key, int);
     __type(value, struct svc_addr);
 } service_mapping SEC(".maps");
+
+/* Map for allowed IP addresses from userspace. This is populated with the responses to dns queries */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, __u32);
+	__type(value, __u32);
+	__uint(max_entries, 10000);
+    // This is a guess at the number of unique IPs we might see while this eBPF is loaded
+    // TODO: Look at clearing out old ips from the list or handling it's size some other way
+} allowed_ips_map SEC(".maps");
+
 
 /* DNS Proxy Port - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy */
 volatile const __u32 const_dns_proxy_port;
@@ -70,4 +82,16 @@ int getpeername4(struct bpf_sock_addr *ctx)
         }
     }
     return 1;
+}
+
+SEC("cgroup_skb/egress")
+int cgroup_skb_egress(struct __sk_buff *skb)
+{
+    struct iphdr iph;
+    /* Load packet header */
+    bpf_skb_load_bytes(skb, 0, &iph, sizeof(struct iphdr));
+    /* Check if the destination IPs are in "blocked" map */
+    bool destination_allowed = bpf_map_lookup_elem(&allowed_ips_map, &iph.daddr);
+    /* Return whether it should be allowed or dropped */
+    return destination_allowed;
 }
