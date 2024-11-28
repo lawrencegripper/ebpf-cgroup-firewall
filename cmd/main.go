@@ -50,7 +50,7 @@ func main() {
 		os.Exit(105)
 	}
 
-	dns, err := dns.StartDNSMonitoringProxy(dnsPort, []string{"example.com"}, ebpfFirewall)
+	dns, err := dns.StartDNSMonitoringProxy(dnsPort, []string{"github.com"}, ebpfFirewall)
 	if err != nil {
 		fmt.Printf("Failed to start DNS blocking proxy: %v\n", err)
 		os.Exit(101)

@@ -32,7 +32,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, __u32);
 	__type(value, __u32);
-	__uint(max_entries, 10000);
+	__uint(max_entries, 256*1024); // Roughly 256k entries. Using ~2MB of memory
     // This is a guess at the number of unique IPs we might see while this eBPF is loaded
     // TODO: Look at clearing out old ips from the list or handling it's size some other way
 } allowed_ips_map SEC(".maps");

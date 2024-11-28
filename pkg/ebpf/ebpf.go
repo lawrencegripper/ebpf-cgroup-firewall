@@ -24,6 +24,7 @@ type DnsFirewall struct {
 func (e *DnsFirewall) AllowIP(ip string) error {
 	fmt.Println("Adding IP to allowed_ips_map: ", ip)
 	allowed_ips := e.Objects.dnsredirectorMaps.AllowedIpsMap
+
 	err := allowed_ips.Put(ipToInt(ip), ipToInt(ip))
 	if err != nil {
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
@@ -33,11 +34,11 @@ func (e *DnsFirewall) AllowIP(ip string) error {
 	return nil
 }
 
-func intToIP(val uint32) net.IP {
-	var bytes [4]byte
-	binary.LittleEndian.PutUint32(bytes[:], val)
-	return net.IPv4(bytes[0], bytes[1], bytes[2], bytes[3])
-}
+// func intToIP(val uint32) net.IP {
+// 	var bytes [4]byte
+// 	binary.LittleEndian.PutUint32(bytes[:], val)
+// 	return net.IPv4(bytes[0], bytes[1], bytes[2], bytes[3])
+// }
 
 func ipToInt(val string) uint32 {
 	ip := net.ParseIP(val).To4()
