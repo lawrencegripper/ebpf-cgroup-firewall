@@ -14,20 +14,22 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-type eBPFDnsFirewall struct {
-	Spec       *ebpf.CollectionSpec
-	Link       *link.Link
-	Programs   dnsredirectorPrograms
-	Collection *ebpf.Collection
+type DnsFirewall struct {
+	Spec     *ebpf.CollectionSpec
+	Link     *link.Link
+	Programs dnsredirectorPrograms
+	Objects  *dnsredirectorObjects
 }
 
-func (e *eBPFDnsFirewall) AllowIP(ip string) error {
+func (e *DnsFirewall) AllowIP(ip string) error {
 	fmt.Println("Adding IP to allowed_ips_map: ", ip)
-	allowed_ips := e.Collection.Maps["allowed_ips_map"]
+	allowed_ips := e.Objects.dnsredirectorMaps.AllowedIpsMap
 	err := allowed_ips.Put(ipToInt(ip), ipToInt(ip))
 	if err != nil {
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
 	}
+
+	fmt.Println("allowed_ips_map: ", allowed_ips.String())
 	return nil
 }
 
@@ -50,7 +52,7 @@ func ipToInt(val string) uint32 {
 //   - cGroupPath: The filesystem path to the cgroup where the eBPF program will be attached.
 //   - dnsProxyPort: The port number on localhost to which DNS requests should be forwarded.
 //   - exemptPID: The PID of the DNS proxy process that should be exempt from redirection to allow calling upstream dns server.
-func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int) (*eBPFDnsFirewall, error) {
+func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int) (*DnsFirewall, error) {
 	// Remove resource limits for kernels <5.11.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("removing memlock: %w", err)
@@ -82,7 +84,7 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	}
 
 	// Load the compiled eBPF ELF and load it into the kernel.
-	var obj dnsredirectorPrograms
+	var obj dnsredirectorObjects
 	if err := spec.LoadAndAssign(&obj, nil); err != nil {
 		return nil, fmt.Errorf("loading and assigning eBPF programs: %w", err)
 	}
@@ -111,15 +113,10 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 		return nil, fmt.Errorf("attaching eBPF program to cgroup: %w", err)
 	}
 
-	coll, err := ebpf.NewCollection(spec)
-	if err != nil {
-		panic(err)
-	}
-
 	fmt.Printf("Successfully attached eBPF programs to cgroup blocking network traffic\n")
-	return &eBPFDnsFirewall{
-		Spec:       spec,
-		Link:       &cgroupLink,
-		Collection: coll,
+	return &DnsFirewall{
+		Spec:    spec,
+		Link:    &cgroupLink,
+		Objects: &obj,
 	}, nil
 }

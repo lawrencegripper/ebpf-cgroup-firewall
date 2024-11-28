@@ -13,7 +13,7 @@ import (
 func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 	domainsToBlock := []string{"bing.com"}
 
-	proxy, err := StartDNSMonitoringProxy(domainsToBlock)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil)
 	require.NoError(t, err)
 
 	defer proxy.Shutdown() // Shutdown the proxy after test
@@ -41,7 +41,7 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 func TestDNSProxy_BlocksDomains(t *testing.T) {
 	domainsToBlock := []string{"example.com"}
 
-	proxy, err := StartDNSMonitoringProxy(domainsToBlock)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, proxy)
 
@@ -72,7 +72,7 @@ func TestDNSProxy_BlocksDomains(t *testing.T) {
 func TestDNSProxy_Shutdown(t *testing.T) {
 	domainsToBlock := []string{"example.com"}
 
-	proxy, err := StartDNSMonitoringProxy(domainsToBlock)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, proxy)
 
@@ -81,7 +81,7 @@ func TestDNSProxy_Shutdown(t *testing.T) {
 }
 
 func TestFindUnusedPort(t *testing.T) {
-	port, err := findUnusedPort()
+	port, err := FindUnusedPort()
 	require.NoError(t, err)
 	assert.NotEqual(t, 0, port)
 

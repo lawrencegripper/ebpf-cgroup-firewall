@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/miekg/dns"
 )
 
@@ -19,13 +20,7 @@ type DNSProxy struct {
 
 // StartDNSMonitoringProxy configures eBPF to redirect DNS requests for the specified cgroup to a local DNS server
 // which blocks requests to the specified domains.
-func StartDNSMonitoringProxy(domainsToBlock []string) (*DNSProxy, error) {
-	// Find an unused port for dns proxy to listen on
-	listenPort, err := findUnusedPort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find an unused port: %w", err)
-	}
-
+func StartDNSMonitoringProxy(listenPort int, domainsToBlock []string, firewall *ebpf.DnsFirewall) (*DNSProxy, error) {
 	// Start the DNS proxy
 	fmt.Printf("Starting DNS server on port %d\n", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
@@ -41,6 +36,7 @@ func StartDNSMonitoringProxy(domainsToBlock []string) (*DNSProxy, error) {
 	serverHandler := &blockingDNSHandler{
 		domainsToBlock:       domainsToBlock,
 		downstreamClient:     downstreamClient,
+		dnsFirewall:          firewall,
 		DownstreamServerAddr: downstreamServerAddr,
 		DNSLog:               make(map[string]int),
 	}
@@ -116,8 +112,8 @@ func (d *DNSProxy) BlockedDomains() string {
 	return builder.String()
 }
 
-// findUnusedPort Finds an unused port to listen on
-func findUnusedPort() (int, error) {
+// FindUnusedPort Finds an unused port to listen on
+func FindUnusedPort() (int, error) {
 	listener, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		return 0, fmt.Errorf("failed to find an unused port: %w", err)
@@ -141,6 +137,7 @@ type blockingDNSHandler struct {
 	blockLogMu           sync.Mutex
 	DNSLog               map[string]int
 	dnsLogMu             sync.Mutex
+	dnsFirewall          *ebpf.DnsFirewall
 	downstreamClient     *dns.Client
 	DownstreamServerAddr string
 }
@@ -196,6 +193,18 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				continue
 			}
 			m.Answer = append(m.Answer, resp.Answer...)
+
+			// Add them to the allowed list for the firewall
+			if b.dnsFirewall != nil {
+				for _, answer := range resp.Answer {
+					if a, ok := answer.(*dns.A); ok {
+						err = b.dnsFirewall.AllowIP(a.A.String())
+						if err != nil {
+							fmt.Printf("Failed to allow IP: %v\n", err)
+						}
+					}
+				}
+			}
 		}
 	}
 

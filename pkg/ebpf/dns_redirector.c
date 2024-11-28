@@ -12,6 +12,8 @@
 
 #define __section(NAME)
 
+char _license[12] SEC("license") = "Dual MIT/GPL";
+
 struct svc_addr {
     __be32 addr;
     __be16 port;
@@ -90,8 +92,21 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     struct iphdr iph;
     /* Load packet header */
     bpf_skb_load_bytes(skb, 0, &iph, sizeof(struct iphdr));
+    /* Allow requests on 53 as we'll capture these and forward to our DNS server*/
+    // if (skb->remote_port == bpf_htons(53)) {
+    //     return 1;
+    // }
     /* Check if the destination IPs are in "blocked" map */
     bool destination_allowed = bpf_map_lookup_elem(&allowed_ips_map, &iph.daddr);
+
+    if (destination_allowed) {
+        bpf_trace_printk("IP %x is allowed\n", sizeof("IP %x is allowed\n"), iph.daddr);
+        return 1;
+    } else {
+        bpf_trace_printk("IP %x is not allowed\n", sizeof("IP %x is not allowed\n"), iph.daddr);
+        return 0;
+    }
+
     /* Return whether it should be allowed or dropped */
     return destination_allowed;
 }

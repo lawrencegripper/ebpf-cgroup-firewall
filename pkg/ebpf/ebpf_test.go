@@ -60,7 +60,7 @@ func TestAttachRedirectorToCGroup_DoesNotImpactOtherTraffic(t *testing.T) {
 	cgroupPath := path.Join(cgroupDefault, cgroupName)
 
 	redirectDNSToPort := 55555
-	_, err = AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0)
+	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0)
 	require.NoError(t, err)
 
 	// Start a http server to validate normal requests are not impacted
@@ -79,7 +79,10 @@ func TestAttachRedirectorToCGroup_DoesNotImpactOtherTraffic(t *testing.T) {
 	}()
 	defer httpServer.Close()
 
-	cmd := exec.Command("sh", "-c", "sleep 0.1; curl -sL http://127.0.0.1:5000")
+	err = firewall.AllowIP("127.0.0.1")
+	require.NoError(t, err)
+
+	cmd := exec.Command("sh", "-c", "sleep 0.1; curl -sL --connect-timeout 1 http://127.0.0.1:5000")
 	if err := cmd.Start(); err != nil {
 		assert.Error(t, err)
 	}
@@ -89,7 +92,18 @@ func TestAttachRedirectorToCGroup_DoesNotImpactOtherTraffic(t *testing.T) {
 		assert.Error(t, err)
 	}
 
-	err = cmd.Wait()
+	cmdChan := make(chan error, 1)
+	go func() {
+		cmdChan <- cmd.Wait()
+	}()
+
+	select {
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for command to finish")
+	case err := <-cmdChan:
+		require.NoError(t, err)
+	}
+
 	require.NoError(t, err)
 }
 
@@ -115,7 +129,10 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	cgroupPathForCurrentProcess = path.Join(cgroup2Mount.Mountpoint, cgroupPathForCurrentProcess)
 
 	redirectDNSToPort := 55555
-	_, err = AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0)
+	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0)
+	require.NoError(t, err)
+
+	err = firewall.AllowIP("127.0.0.1")
 	require.NoError(t, err)
 
 	cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPathForCurrentProcess)

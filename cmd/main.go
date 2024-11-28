@@ -16,12 +16,6 @@ import (
 func main() {
 	fmt.Println("Let's have a peak at what DNS requests are made by this process on port 53!")
 
-	dns, err := dns.StartDNSMonitoringProxy([]string{"example.com"})
-	if err != nil {
-		fmt.Printf("Failed to start DNS blocking proxy: %v\n", err)
-		os.Exit(101)
-	}
-
 	// Actions should already be running the worker in a cgroup so we can just attach to that
 	// first find it:
 	cgroupProcFile := fmt.Sprintf("/proc/%d/cgroup", os.Getpid())
@@ -46,18 +40,34 @@ func main() {
 
 	fmt.Println("Attaching to cgroup: ", cgroupPathForCurrentProcess)
 
+	// get a port for the DNS server
+	dnsPort, err := dns.FindUnusedPort()
+
 	// then attach the eBPF program to it
-	ebpfFirewall, err := ebpf.AttachRedirectorToCGroup(cgroupPathForCurrentProcess, dns.Port, os.Getpid())
+	ebpfFirewall, err := ebpf.AttachRedirectorToCGroup(cgroupPathForCurrentProcess, dnsPort, os.Getpid())
 	if err != nil {
 		fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
 		os.Exit(105)
+	}
+
+	dns, err := dns.StartDNSMonitoringProxy(dnsPort, []string{"example.com"}, ebpfFirewall)
+	if err != nil {
+		fmt.Printf("Failed to start DNS blocking proxy: %v\n", err)
+		os.Exit(101)
 	}
 
 	downstreamDnsIP := strings.Split(dns.BlockingDNSHandler.DownstreamServerAddr, ":")[0]
 	err = ebpfFirewall.AllowIP(downstreamDnsIP)
 	if err != nil {
 		fmt.Printf("Failed to allow IP: %v\n", err)
-		os.Exit(109)
+		os.Exit(108)
+	}
+
+	// Allow calls to localhost
+	err = ebpfFirewall.AllowIP("127.0.0.1")
+	if err != nil {
+		fmt.Printf("Failed to allow IP: %v\n", err)
+		os.Exit(108)
 	}
 
 	// Now lets wait and see what DNS request happen
