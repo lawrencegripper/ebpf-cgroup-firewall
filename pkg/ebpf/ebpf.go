@@ -14,14 +14,27 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-type DnsFirewall struct {
-	Spec     *ebpf.CollectionSpec
-	Link     *link.Link
-	Programs dnsredirectorPrograms
-	Objects  *dnsredirectorObjects
+type AllowKind int
+
+const (
+	UserSpecified AllowKind = iota
+	FromDnsRequest
+)
+
+type Reason struct {
+	Kind    AllowKind
+	Comment string
 }
 
-func (e *DnsFirewall) AllowIP(ip string) error {
+type DnsFirewall struct {
+	Spec                 *ebpf.CollectionSpec
+	Link                 *link.Link
+	Programs             dnsredirectorPrograms
+	Objects              *dnsredirectorObjects
+	AllowedIPsWithReason map[string]*Reason
+}
+
+func (e *DnsFirewall) AllowIP(ip string, reason *Reason) error {
 	fmt.Println("Adding IP to allowed_ips_map: ", ip)
 	allowed_ips := e.Objects.dnsredirectorMaps.AllowedIpsMap
 
@@ -29,6 +42,12 @@ func (e *DnsFirewall) AllowIP(ip string) error {
 	if err != nil {
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
 	}
+
+	if e.AllowedIPsWithReason == nil {
+		e.AllowedIPsWithReason = make(map[string]*Reason)
+	}
+
+	e.AllowedIPsWithReason[ip] = reason
 
 	fmt.Println("allowed_ips_map: ", allowed_ips.String())
 	return nil

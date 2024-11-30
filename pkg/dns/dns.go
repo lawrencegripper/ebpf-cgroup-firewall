@@ -198,7 +198,10 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			if b.dnsFirewall != nil {
 				for _, answer := range resp.Answer {
 					if a, ok := answer.(*dns.A); ok {
-						err = b.dnsFirewall.AllowIP(a.A.String())
+						err = b.dnsFirewall.AllowIP(
+							a.A.String(),
+							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s", a.A.String())},
+						)
 						if err != nil {
 							fmt.Printf("Failed to allow IP: %v\n", err)
 						}

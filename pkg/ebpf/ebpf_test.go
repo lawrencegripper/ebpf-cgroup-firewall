@@ -79,7 +79,7 @@ func TestAttachRedirectorToCGroup_DoesNotImpactOtherTraffic(t *testing.T) {
 	}()
 	defer httpServer.Close()
 
-	err = firewall.AllowIP("127.0.0.1")
+	err = firewall.AllowIP("127.0.0.1", nil)
 	require.NoError(t, err)
 
 	cmd := exec.Command("sh", "-c", "sleep 0.1; curl -sL --connect-timeout 1 http://127.0.0.1:5000")
@@ -132,7 +132,7 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0)
 	require.NoError(t, err)
 
-	err = firewall.AllowIP("127.0.0.1")
+	err = firewall.AllowIP("127.0.0.1", nil)
 	require.NoError(t, err)
 
 	cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPathForCurrentProcess)
