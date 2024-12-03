@@ -7,50 +7,74 @@ import (
 	"path"
 	"strings"
 
+	"github.com/alecthomas/kong"
 	"github.com/containerd/cgroups"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/moby/sys/mountinfo"
 )
 
+var CmdOptions struct {
+	Run struct {
+		Command   string   `arg:"" help:"Command to run with firewall" type:"path"`
+		AllowList []string `help:"IPs or Domains which are allowed"`
+	} `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
+
+	Attach struct {
+		AllowList []string `help:"IPs or Domains which are allowed"`
+	} `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
+}
+
 func main() {
+	var attach bool
+	var allowList []string
+
+	ctx := kong.Parse(&CmdOptions)
+	fmt.Println(ctx.Command())
+	switch ctx.Command() {
+	case "run <command>":
+		attach = false
+		allowList = CmdOptions.Run.AllowList
+	case "attach":
+		attach = true
+		allowList = CmdOptions.Attach.AllowList
+	default:
+		panic("Command not implemented")
+	}
+
+	ipsAllowed, domainsAllowed := splitAllowListByType(allowList)
+
+	// Log the allowed IPs and domains
+	fmt.Println("Allowed IPs:", ipsAllowed)
+	fmt.Println("Allowed Domains:", domainsAllowed)
+
 	fmt.Println("Let's have a peak at what DNS requests are made by this process on port 53!")
 
 	// Actions should already be running the worker in a cgroup so we can just attach to that
 	// first find it:
-	cgroupProcFile := fmt.Sprintf("/proc/%d/cgroup", os.Getpid())
-	_, cgroupPathForCurrentProcess, err := cgroups.ParseCgroupFileUnified(cgroupProcFile)
-	if err != nil {
-		fmt.Printf("Failed to get cgroup path: %v\n", err)
-		os.Exit(102)
+	var pathToCGroupToRunIn string
+	if attach {
+		pathToCGroupToRunIn = GetCGroupForCurrentProcess()
+	} else {
+		panic("not implemented")
 	}
-
-	mounts, err := mountinfo.GetMounts(mountinfo.FSTypeFilter("cgroup2"))
-	if err != nil {
-		fmt.Printf("failed to get cgroup2 mounts: %s\n", err.Error())
-		os.Exit(103)
-	}
-	if len(mounts) == 0 {
-		fmt.Printf("no cgroup2 mounts found\n")
-		os.Exit(104)
-	}
-	cgroup2Mount := mounts[0]
-
-	cgroupPathForCurrentProcess = path.Join(cgroup2Mount.Mountpoint, cgroupPathForCurrentProcess)
-
-	fmt.Println("Attaching to cgroup: ", cgroupPathForCurrentProcess)
+	fmt.Println("Attaching to cgroup: ", pathToCGroupToRunIn)
 
 	// get a port for the DNS server
 	dnsPort, err := dns.FindUnusedPort()
+	if err != nil {
+		panic("No free ports")
+	}
 
 	// then attach the eBPF program to it
-	ebpfFirewall, err := ebpf.AttachRedirectorToCGroup(cgroupPathForCurrentProcess, dnsPort, os.Getpid())
+	ignoreCurrentPid := os.Getpid()
+	ebpfFirewall, err := ebpf.AttachRedirectorToCGroup(pathToCGroupToRunIn, dnsPort, ignoreCurrentPid)
 	if err != nil {
 		fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
 		os.Exit(105)
 	}
 
-	dns, err := dns.StartDNSMonitoringProxy(dnsPort, []string{"github.com"}, ebpfFirewall)
+	dns, err := dns.StartDNSMonitoringProxy(dnsPort, domainsAllowed, ebpfFirewall)
 	if err != nil {
 		fmt.Printf("Failed to start DNS blocking proxy: %v\n", err)
 		os.Exit(101)
@@ -68,6 +92,14 @@ func main() {
 	if err != nil {
 		fmt.Printf("Failed to allow IP: %v\n", err)
 		os.Exit(108)
+	}
+
+	// Add explicitly allowed ips
+	for _, ip := range ipsAllowed {
+		if err := ebpfFirewall.AllowIP(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allowed by Allowlist"}); err != nil {
+			fmt.Printf("Failed to allow IP: %v\n", err)
+			os.Exit(108)
+		}
 	}
 
 	// Now lets wait and see what DNS request happen
@@ -104,4 +136,58 @@ func main() {
 	}
 
 	fmt.Println("DNS logs written to /tmp/dnsrequests.log and /tmp/dnsblocked.log")
+}
+
+func splitAllowListByType(allowList []string) ([]string, []string) {
+	var ips []string
+	var domains []string
+
+	for _, item := range allowList {
+		// Simple IP check - looks for dots and numbers
+		if strings.Count(item, ".") == 3 {
+			isIP := true
+			for _, part := range strings.Split(item, ".") {
+				if len(part) == 0 {
+					isIP = false
+					break
+				}
+				for _, c := range part {
+					if c < '0' || c > '9' {
+						isIP = false
+						break
+					}
+				}
+			}
+			if isIP {
+				ips = append(ips, item)
+				continue
+			}
+		}
+		domains = append(domains, item)
+	}
+
+	return ips, domains
+}
+
+func GetCGroupForCurrentProcess() string {
+	cgroupProcFile := fmt.Sprintf("/proc/%d/cgroup", os.Getpid())
+	_, cgroupPathForCurrentProcess, err := cgroups.ParseCgroupFileUnified(cgroupProcFile)
+	if err != nil {
+		fmt.Printf("Failed to get cgroup path: %v\n", err)
+		os.Exit(102)
+	}
+
+	mounts, err := mountinfo.GetMounts(mountinfo.FSTypeFilter("cgroup2"))
+	if err != nil {
+		fmt.Printf("failed to get cgroup2 mounts: %s\n", err.Error())
+		os.Exit(103)
+	}
+	if len(mounts) == 0 {
+		fmt.Printf("no cgroup2 mounts found\n")
+		os.Exit(104)
+	}
+	cgroup2Mount := mounts[0]
+
+	cgroupPathForCurrentProcess = path.Join(cgroup2Mount.Mountpoint, cgroupPathForCurrentProcess)
+	return cgroupPathForCurrentProcess
 }

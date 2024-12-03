@@ -5,6 +5,7 @@ go 1.23.2
 require github.com/cilium/ebpf v0.16.1-0.20241001200337-21be59580a51
 
 require (
+	github.com/alecthomas/kong v1.5.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect

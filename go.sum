@@ -1,3 +1,5 @@
+github.com/alecthomas/kong v1.5.1 h1:9quB93P2aNGXf5C1kWNei85vjBgITNJQA4dSwJQGCOY=
+github.com/alecthomas/kong v1.5.1/go.mod h1:p2vqieVMeTAnaC83txKtXe8FLke2X07aruPWXyMPQrU=
 github.com/cilium/ebpf v0.16.0 h1:+BiEnHL6Z7lXnlGUsXQPPAE7+kenAd4ES8MQ5min0Ok=
 github.com/cilium/ebpf v0.16.0/go.mod h1:L7u2Blt2jMM/vLAVgjxluxtBKlz3/GWjB0dMOEngfwE=
 github.com/cilium/ebpf v0.16.1-0.20241001200337-21be59580a51 h1:Nz1/IVj9f6E0WpmsrXRW6IuotbWSlwD/BxQwQ9GMT1k=
