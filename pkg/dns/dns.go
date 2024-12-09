@@ -165,7 +165,6 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		// Handle blocking
 		for _, domain := range b.allowedDomains {
-			fmt.Printf("%s, %s allow: %v", q.Name, domain, strings.HasSuffix(q.Name, domain+"."))
 			if strings.HasSuffix(q.Name, domain+".") {
 				shouldBlock = false
 			} else {

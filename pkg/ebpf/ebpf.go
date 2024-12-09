@@ -140,10 +140,10 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	if err != nil {
 		return nil, fmt.Errorf("opening ringbuf reader: %w", err)
 	}
-	defer ringBufferEventsReader.Close()
 
 	go func() {
 		var event bpfEvent
+		var pidCache map[int]string
 		for {
 			record, err := ringBufferEventsReader.Read()
 			if err != nil {
@@ -163,6 +163,21 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 
 				continue
 			}
+
+			// Lookup the processPath for the event
+			processPath, cacheHit := pidCache[int(event.Pid)]
+			if !cacheHit {
+				processPath, err = os.Readlink(fmt.Sprintf("/proc/%d/exe", event.Pid))
+				if err != nil {
+					fmt.Printf("reading process path: %s", err)
+				}
+
+				if err != nil {
+					fmt.Printf("finding process: %s", err)
+				}
+			}
+
+			fmt.Printf("Process: %+v\n", processPath)
 
 			fmt.Printf("Testing 123: %+v\n", event)
 		}

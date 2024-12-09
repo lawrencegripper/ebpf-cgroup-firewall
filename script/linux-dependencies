@@ -5,7 +5,7 @@ set -e
 # Update package list and install common dependencies
 apt update
 # Used for eBPF compilation and DNS tooling
-apt install clang llvm libbpf-dev gcc-multilib dnsutils -y;
+apt install clang llvm libbpf-dev gcc-multilib dnsutils iputils-ping -y;
 
 # Required for eBPF compilation on Ubuntu vs Debian
 # Check the distribution and install the appropriate headers
