@@ -20,7 +20,7 @@ type DNSProxy struct {
 
 // StartDNSMonitoringProxy configures eBPF to redirect DNS requests for the specified cgroup to a local DNS server
 // which blocks requests to the specified domains.
-func StartDNSMonitoringProxy(listenPort int, domainsToBlock []string, firewall *ebpf.DnsFirewall) (*DNSProxy, error) {
+func StartDNSMonitoringProxy(listenPort int, allowedDomains []string, firewall *ebpf.DnsFirewall) (*DNSProxy, error) {
 	// Start the DNS proxy
 	fmt.Printf("Starting DNS server on port %d\n", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
@@ -34,7 +34,7 @@ func StartDNSMonitoringProxy(listenPort int, domainsToBlock []string, firewall *
 	fmt.Printf("Using downstream DNS resolver: %s\n", downstreamServerAddr)
 
 	serverHandler := &blockingDNSHandler{
-		domainsToBlock:       domainsToBlock,
+		allowedDomains:       allowedDomains,
 		downstreamClient:     downstreamClient,
 		dnsFirewall:          firewall,
 		DownstreamServerAddr: downstreamServerAddr,
@@ -132,7 +132,7 @@ type dnsBlockResult struct {
 }
 
 type blockingDNSHandler struct {
-	domainsToBlock       []string
+	allowedDomains       []string
 	BlockLog             []dnsBlockResult
 	blockLogMu           sync.Mutex
 	DNSLog               map[string]int
@@ -149,7 +149,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Authoritative = true
 
 	for _, q := range r.Question {
-		shouldBlock := false
+		shouldBlock := true
 		blockedBecause := ""
 
 		// Track the DNS request
@@ -164,21 +164,20 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		b.dnsLogMu.Unlock()
 
 		// Handle blocking
-		for _, domain := range b.domainsToBlock {
-			if !strings.HasSuffix(q.Name, domain+".") {
-				continue
+		for _, domain := range b.allowedDomains {
+			fmt.Printf("%s, %s allow: %v", q.Name, domain, strings.HasSuffix(q.Name, domain+"."))
+			if strings.HasSuffix(q.Name, domain+".") {
+				shouldBlock = false
+			} else {
+				blockedBecause = domain
+				// Track that we would block this domain
+				b.blockLogMu.Lock()
+				b.BlockLog = append(b.BlockLog, dnsBlockResult{
+					MatchedDomainSuffix: domain,
+					DNSRequest:          q.Name,
+				})
+				b.blockLogMu.Unlock()
 			}
-
-			shouldBlock = true
-			blockedBecause = domain
-			// Track that we would block this domain
-			b.blockLogMu.Lock()
-			b.BlockLog = append(b.BlockLog, dnsBlockResult{
-				MatchedDomainSuffix: domain,
-				DNSRequest:          q.Name,
-			})
-			b.blockLogMu.Unlock()
-			break
 		}
 
 		if shouldBlock {
