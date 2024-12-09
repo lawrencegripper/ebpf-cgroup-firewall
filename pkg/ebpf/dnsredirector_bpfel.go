@@ -68,8 +68,9 @@ type dnsredirectorProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type dnsredirectorMapSpecs struct {
-	AllowedIpsMap  *ebpf.MapSpec `ebpf:"allowed_ips_map"`
-	ServiceMapping *ebpf.MapSpec `ebpf:"service_mapping"`
+	AllowedIpsMap        *ebpf.MapSpec `ebpf:"allowed_ips_map"`
+	ConnectionInfoEvents *ebpf.MapSpec `ebpf:"connection_info_events"`
+	ServiceMapping       *ebpf.MapSpec `ebpf:"service_mapping"`
 }
 
 // dnsredirectorObjects contains all objects after they have been loaded into the kernel.
@@ -91,13 +92,15 @@ func (o *dnsredirectorObjects) Close() error {
 //
 // It can be passed to loadDnsredirectorObjects or ebpf.CollectionSpec.LoadAndAssign.
 type dnsredirectorMaps struct {
-	AllowedIpsMap  *ebpf.Map `ebpf:"allowed_ips_map"`
-	ServiceMapping *ebpf.Map `ebpf:"service_mapping"`
+	AllowedIpsMap        *ebpf.Map `ebpf:"allowed_ips_map"`
+	ConnectionInfoEvents *ebpf.Map `ebpf:"connection_info_events"`
+	ServiceMapping       *ebpf.Map `ebpf:"service_mapping"`
 }
 
 func (m *dnsredirectorMaps) Close() error {
 	return _DnsredirectorClose(
 		m.AllowedIpsMap,
+		m.ConnectionInfoEvents,
 		m.ServiceMapping,
 	)
 }

@@ -46,6 +46,26 @@ volatile const __u32 const_dns_proxy_port;
 */
 volatile const __u32 const_dns_proxy_pid;
 
+// Used by the ring buffer to communicate with userspace program
+// about the what actions are taken
+struct connection_info {
+    __u32 pid;
+    __u16 port;
+    bool allowed;
+    __be32 ip;
+    __be32 originalIp;
+    bool isDns;
+};
+
+// ring buffer used to by userspace to subscribe to events
+struct {
+	__uint(type, BPF_MAP_TYPE_RINGBUF);
+	__uint(max_entries, 1 << 24);
+} connection_info_events SEC(".maps");
+
+// Force emitting struct event into the ELF.
+const struct event *unused __attribute__((unused));
+
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx)
 {
@@ -65,6 +85,17 @@ int connect4(struct bpf_sock_addr *ctx)
         /* This is the hexadecimal representation of 127.0.0.1 address */
         ctx->user_ip4 = bpf_htonl(0x7f000001);
         ctx->user_port = bpf_htons(const_dns_proxy_port);
+
+        struct connection_info info = {
+            .pid = bpf_get_current_pid_tgid() >> 32,
+            .port = ctx->user_port,
+            .allowed = true,
+            .ip = ctx->user_ip4,
+            .originalIp = orig->addr,
+            .isDns = true,
+        };
+
+        bpf_ringbuf_output(&connection_info_events, &info, sizeof(info), 0);
     }
     return 1;
 }
@@ -101,9 +132,29 @@ int cgroup_skb_egress(struct __sk_buff *skb)
 
     if (destination_allowed) {
         bpf_trace_printk("IP %x is allowed\n", sizeof("IP %x is allowed\n"), iph.daddr);
+        struct connection_info info = {
+            .pid = bpf_get_current_pid_tgid() >> 32,
+            .port = skb->remote_port,
+            .allowed = true,
+            .ip = iph.daddr,
+            .originalIp = iph.daddr,
+            .isDns = false,
+        };
+
+        bpf_ringbuf_output(&connection_info_events, &info, sizeof(info), 0);
         return 1;
     } else {
         bpf_trace_printk("IP %x is not allowed\n", sizeof("IP %x is not allowed\n"), iph.daddr);
+        struct connection_info info = {
+            .pid = bpf_get_current_pid_tgid() >> 32,
+            .port = skb->remote_port,
+            .allowed = false,
+            .ip = iph.daddr,
+            .originalIp = iph.daddr,
+            .isDns = false,
+        };
+
+        bpf_ringbuf_output(&connection_info_events, &info, sizeof(info), 0);
         return 0;
     }
 
