@@ -1,16 +1,19 @@
 package ebpf
 
 // Generate the eBPF code in dns_redirector.c 👇 this causes go to do that when `go build` is run
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go dnsredirector dns_redirector.c
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type event bpf bpf.c
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
@@ -29,16 +32,17 @@ type Reason struct {
 type DnsFirewall struct {
 	Spec                 *ebpf.CollectionSpec
 	Link                 *link.Link
-	Programs             dnsredirectorPrograms
-	Objects              *dnsredirectorObjects
+	Programs             bpfPrograms
+	Objects              *bpfObjects
 	AllowedIPsWithReason map[string]*Reason
+	RingBufferReader     *ringbuf.Reader
 }
 
 func (e *DnsFirewall) AllowIP(ip string, reason *Reason) error {
 	fmt.Println("Adding IP to allowed_ips_map: ", ip)
-	allowed_ips := e.Objects.dnsredirectorMaps.AllowedIpsMap
+	allowedIps := e.Objects.bpfMaps.AllowedIpsMap
 
-	err := allowed_ips.Put(ipToInt(ip), ipToInt(ip))
+	err := allowedIps.Put(ipToInt(ip), ipToInt(ip))
 	if err != nil {
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
 	}
@@ -49,7 +53,7 @@ func (e *DnsFirewall) AllowIP(ip string, reason *Reason) error {
 
 	e.AllowedIPsWithReason[ip] = reason
 
-	fmt.Println("allowed_ips_map: ", allowed_ips.String())
+	fmt.Println("allowed_ips_map: ", allowedIps.String())
 	return nil
 }
 
@@ -64,9 +68,6 @@ func ipToInt(val string) uint32 {
 	return binary.LittleEndian.Uint32(ip)
 }
 
-// Generate the eBPF code in dns_redirector.c
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go dnsredirector dns_redirector.c
-
 // AttachRedirectorToCGroup attaches the eBPF program to the cgroup at the specified path.
 // Parameters:
 //   - cGroupPath: The filesystem path to the cgroup where the eBPF program will be attached.
@@ -79,7 +80,7 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	}
 
 	// Load network block spec
-	spec, err := loadDnsredirector()
+	spec, err := loadBpf()
 	if err != nil {
 		return nil, fmt.Errorf("loading networkblock spec: %w", err)
 	}
@@ -104,7 +105,7 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	}
 
 	// Load the compiled eBPF ELF and load it into the kernel.
-	var obj dnsredirectorObjects
+	var obj bpfObjects
 	if err := spec.LoadAndAssign(&obj, nil); err != nil {
 		return nil, fmt.Errorf("loading and assigning eBPF programs: %w", err)
 	}
@@ -133,10 +134,45 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 		return nil, fmt.Errorf("attaching eBPF program to cgroup: %w", err)
 	}
 
+	// Open a ringbuf reader from userspace RINGBUF map described in the
+	// eBPF C program.
+	ringBufferEventsReader, err := ringbuf.NewReader(obj.Events)
+	if err != nil {
+		return nil, fmt.Errorf("opening ringbuf reader: %w", err)
+	}
+	defer ringBufferEventsReader.Close()
+
+	go func() {
+		var event bpfEvent
+		for {
+			record, err := ringBufferEventsReader.Read()
+			if err != nil {
+				if errors.Is(err, ringbuf.ErrClosed) {
+					fmt.Println("Received signal, exiting..")
+
+					return
+				}
+				fmt.Printf("reading from reader: %s", err)
+
+				continue
+			}
+
+			// Parse the ringbuf event entry into a bpfEvent structure.
+			if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
+				fmt.Printf("parsing ringbuf event: %s", err)
+
+				continue
+			}
+
+			fmt.Printf("Testing 123: %+v\n", event)
+		}
+	}()
+
 	fmt.Printf("Successfully attached eBPF programs to cgroup blocking network traffic\n")
 	return &DnsFirewall{
-		Spec:    spec,
-		Link:    &cgroupLink,
-		Objects: &obj,
+		Spec:             spec,
+		Link:             &cgroupLink,
+		Objects:          &obj,
+		RingBufferReader: ringBufferEventsReader,
 	}, nil
 }
