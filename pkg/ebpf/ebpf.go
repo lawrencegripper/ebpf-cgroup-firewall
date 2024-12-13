@@ -38,6 +38,10 @@ type DnsFirewall struct {
 	RingBufferReader     *ringbuf.Reader
 }
 
+// TODO
+// Make it so you can optionally allow a port, if no port set then default to any
+// this gets interesting for the dns based ones, what ports? 443 and 80? we can't really guess
+// hmmm maybe it's ok as just ip allowed.
 func (e *DnsFirewall) AllowIP(ip string, reason *Reason) error {
 	fmt.Println("Adding IP to allowed_ips_map: ", ip)
 	allowedIps := e.Objects.bpfMaps.AllowedIpsMap
@@ -57,11 +61,12 @@ func (e *DnsFirewall) AllowIP(ip string, reason *Reason) error {
 	return nil
 }
 
-// func intToIP(val uint32) net.IP {
-// 	var bytes [4]byte
-// 	binary.LittleEndian.PutUint32(bytes[:], val)
-// 	return net.IPv4(bytes[0], bytes[1], bytes[2], bytes[3])
-// }
+func intToIP(val uint32) net.IP {
+	var bytes [4]byte
+	binary.LittleEndian.PutUint32(bytes[:], val)
+
+	return net.IPv4(bytes[0], bytes[1], bytes[2], bytes[3])
+}
 
 func ipToInt(val string) uint32 {
 	ip := net.ParseIP(val).To4()
@@ -164,22 +169,34 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 				continue
 			}
 
+			if event.Pid == 0 {
+				// TODO: Why are we getting pid 0s here?
+				continue
+			}
+
 			// Lookup the processPath for the event
 			processPath, cacheHit := pidCache[int(event.Pid)]
 			if !cacheHit {
 				processPath, err = os.Readlink(fmt.Sprintf("/proc/%d/exe", event.Pid))
 				if err != nil {
-					fmt.Printf("reading process path: %s", err)
+					fmt.Printf("reading process path: %s\n", err)
 				}
 
 				if err != nil {
-					fmt.Printf("finding process: %s", err)
+					// TODO: I need to handle that between the request and the event ending up here the process might
+					// have exited
+					fmt.Printf("finding process: %s\n", err)
 				}
 			}
 
-			fmt.Printf("Process: %+v\n", processPath)
+			ip := intToIP(event.Ip)
+			if !event.Allowed {
+				fmt.Printf("Request to %s by %s blocked. No allowed IP.\n", ip, processPath)
+			}
 
-			fmt.Printf("Testing 123: %+v\n", event)
+			if event.IsDns {
+				fmt.Printf("DNS Request from %s.\n", processPath)
+			}
 		}
 	}()
 

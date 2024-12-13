@@ -88,6 +88,7 @@ func main() {
 	}
 
 	// Allow calls to localhost
+	// TODO: This is pretty permissive, probably this should be an option for uesrs to decide on
 	err = ebpfFirewall.AllowIP("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
 	if err != nil {
 		fmt.Printf("Failed to allow IP: %v\n", err)

@@ -88,6 +88,8 @@ int connect4(struct bpf_sock_addr *ctx)
         ctx->user_ip4 = bpf_htonl(0x7f000001);
         ctx->user_port = bpf_htons(const_dns_proxy_port);
 
+
+
         struct event info = {
             .pid = bpf_get_current_pid_tgid() >> 32,
             .port = ctx->user_port,
@@ -132,6 +134,11 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     /* Check if the destination IPs are in "blocked" map */
     bool destination_allowed = bpf_map_lookup_elem(&allowed_ips_map, &iph.daddr);
 
+    bool isDNS = false;
+    if (iph.protocol == IPPROTO_UDP && skb->remote_port == bpf_htons(53)) {
+        isDNS = true;
+    }
+
     if (destination_allowed) {
         bpf_trace_printk("IP %x is allowed\n", sizeof("IP %x is allowed\n"), iph.daddr);
         struct event info = {
@@ -140,7 +147,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
             .allowed = true,
             .ip = iph.daddr,
             .originalIp = iph.daddr,
-            .isDns = false,
+            .isDns = isDNS,
         };
 
         bpf_ringbuf_output(&events, &info, sizeof(info), 0);
@@ -153,7 +160,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
             .allowed = false,
             .ip = iph.daddr,
             .originalIp = iph.daddr,
-            .isDns = false,
+            .isDns = isDNS,
         };
 
         bpf_ringbuf_output(&events, &info, sizeof(info), 0);

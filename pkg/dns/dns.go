@@ -179,20 +179,18 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 		}
 
-		if shouldBlock {
-			// Block this domain by returning NXDOMAIN
-			m.Rcode = dns.RcodeRefused
-			fmt.Printf("Refused DNS query for domain %s, blocked because of %s\n", q.Name, blockedBecause)
-		} else {
-			resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)
-			if err != nil {
-				fmt.Printf("Failed to resolve from downstream: %v, domain: %s, downstream server: %s\n", err, q.Name, b.DownstreamServerAddr)
-				m.Rcode = dns.RcodeServerFailure
-				continue
-			}
-			m.Answer = append(m.Answer, resp.Answer...)
+		resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)
+		if err != nil {
+			fmt.Printf("Failed to resolve from downstream: %v, domain: %s, downstream server: %s\n", err, q.Name, b.DownstreamServerAddr)
+			m.Rcode = dns.RcodeServerFailure
+			continue
+		}
+		m.Answer = append(m.Answer, resp.Answer...)
 
-			// Add them to the allowed list for the firewall
+		// Add them to the allowed list for the firewall
+		if shouldBlock {
+			fmt.Printf("DNS Resolved but IP not allowed, request will be blocked %s.\n", blockedBecause)
+		} else {
 			if b.dnsFirewall != nil {
 				for _, answer := range resp.Answer {
 					if a, ok := answer.(*dns.A); ok {
