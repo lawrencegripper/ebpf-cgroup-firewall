@@ -38,15 +38,23 @@ type DnsFirewall struct {
 	RingBufferReader     *ringbuf.Reader
 }
 
+type FirewallMethod uint16
+
+const (
+	LogOnly   FirewallMethod = 0
+	AllowList FirewallMethod = 1
+	BlockList FirewallMethod = 2
+)
+
 // TODO
 // Make it so you can optionally allow a port, if no port set then default to any
 // this gets interesting for the dns based ones, what ports? 443 and 80? we can't really guess
 // hmmm maybe it's ok as just ip allowed.
 func (e *DnsFirewall) AllowIP(ip string, reason *Reason) error {
-	fmt.Println("Adding IP to allowed_ips_map: ", ip)
-	allowedIps := e.Objects.bpfMaps.AllowedIpsMap
+	fmt.Println("Adding IP to firewall_ips_map: ", ip)
+	firewallIps := e.Objects.bpfMaps.FirewallIpMap
 
-	err := allowedIps.Put(ipToInt(ip), ipToInt(ip))
+	err := firewallIps.Put(ipToInt(ip), ipToInt(ip))
 	if err != nil {
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
 	}
@@ -57,7 +65,7 @@ func (e *DnsFirewall) AllowIP(ip string, reason *Reason) error {
 
 	e.AllowedIPsWithReason[ip] = reason
 
-	fmt.Println("allowed_ips_map: ", allowedIps.String())
+	fmt.Println("firewall_ips_map: ", firewallIps.String())
 	return nil
 }
 
@@ -78,7 +86,7 @@ func ipToInt(val string) uint32 {
 //   - cGroupPath: The filesystem path to the cgroup where the eBPF program will be attached.
 //   - dnsProxyPort: The port number on localhost to which DNS requests should be forwarded.
 //   - exemptPID: The PID of the DNS proxy process that should be exempt from redirection to allow calling upstream dns server.
-func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int) (*DnsFirewall, error) {
+func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int, firewallMethod FirewallMethod) (*DnsFirewall, error) {
 	// Remove resource limits for kernels <5.11.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("removing memlock: %w", err)
@@ -88,6 +96,12 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	spec, err := loadBpf()
 	if err != nil {
 		return nil, fmt.Errorf("loading networkblock spec: %w", err)
+	}
+
+	// Set the firewall method
+	err = spec.Variables["const_firewall_mode"].Set(firewallMethod)
+	if err != nil {
+		return nil, fmt.Errorf("setting const_firewall_mode port variable failed: %w", err)
 	}
 
 	// Set the port which the DNS requests should be forwarded to on localhost

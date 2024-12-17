@@ -17,17 +17,21 @@ import (
 var CmdOptions struct {
 	Run struct {
 		Command   string   `arg:"" help:"Command to run with firewall" type:"path"`
-		AllowList []string `help:"IPs or Domains which are allowed"`
+		AllowList []string `xor:"AllowList,BlockList" help:"IPs or Domains which are allowed"`
+		BlockList []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
 	} `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
 
 	Attach struct {
-		AllowList []string `help:"IPs or Domains which are allowed"`
+		AllowList []string `xor:"AllowList,BlockList" help:"IPs or Domains which are allowed"`
+		BlockList []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
 	} `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
 }
 
 func main() {
 	var attach bool
 	var allowList []string
+	var blockList []string
+	var firewallMethod ebpf.FirewallMethod
 
 	ctx := kong.Parse(&CmdOptions)
 	fmt.Println(ctx.Command())
@@ -35,18 +39,27 @@ func main() {
 	case "run <command>":
 		attach = false
 		allowList = CmdOptions.Run.AllowList
+		blockList = CmdOptions.Run.BlockList
 	case "attach":
 		attach = true
 		allowList = CmdOptions.Attach.AllowList
+		blockList = CmdOptions.Attach.BlockList
 	default:
 		panic("Command not implemented")
 	}
 
-	ipsAllowed, domainsAllowed := splitAllowListByType(allowList)
+	firewallList := make([]string, 0)
+	if len(allowList) == 0 && len(blockList) == 0 {
+		firewallMethod = ebpf.LogOnly
+	} else if len(allowList) > 0 {
+		firewallMethod = ebpf.AllowList
+		firewallList = allowList
+	} else {
+		firewallMethod = ebpf.BlockList
+		firewallList = blockList
+	}
 
-	// Log the allowed IPs and domains
-	fmt.Println("Allowed IPs:", ipsAllowed)
-	fmt.Println("Allowed Domains:", domainsAllowed)
+	firewallIps, firewallDomains := splitDomainAndIPListByType(firewallList)
 
 	fmt.Println("Let's have a peak at what DNS requests are made by this process on port 53!")
 
@@ -68,13 +81,13 @@ func main() {
 
 	// then attach the eBPF program to it
 	ignoreCurrentPid := os.Getpid()
-	ebpfFirewall, err := ebpf.AttachRedirectorToCGroup(pathToCGroupToRunIn, dnsPort, ignoreCurrentPid)
+	ebpfFirewall, err := ebpf.AttachRedirectorToCGroup(pathToCGroupToRunIn, dnsPort, ignoreCurrentPid, firewallMethod)
 	if err != nil {
 		fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
 		os.Exit(105)
 	}
 
-	dns, err := dns.StartDNSMonitoringProxy(dnsPort, domainsAllowed, ebpfFirewall)
+	dns, err := dns.StartDNSMonitoringProxy(dnsPort, firewallDomains, ebpfFirewall)
 	if err != nil {
 		fmt.Printf("Failed to start DNS blocking proxy: %v\n", err)
 		os.Exit(101)
@@ -96,7 +109,7 @@ func main() {
 	}
 
 	// Add explicitly allowed ips
-	for _, ip := range ipsAllowed {
+	for _, ip := range firewallIps {
 		if err := ebpfFirewall.AllowIP(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allowed by Allowlist"}); err != nil {
 			fmt.Printf("Failed to allow IP: %v\n", err)
 			os.Exit(108)
@@ -139,7 +152,7 @@ func main() {
 	fmt.Println("DNS logs written to /tmp/dnsrequests.log and /tmp/dnsblocked.log")
 }
 
-func splitAllowListByType(allowList []string) ([]string, []string) {
+func splitDomainAndIPListByType(allowList []string) ([]string, []string) {
 	var ips []string
 	var domains []string
 

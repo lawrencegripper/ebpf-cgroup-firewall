@@ -57,7 +57,7 @@ struct {
 	__uint(max_entries, 256*1024); // Roughly 256k entries. Using ~2MB of memory
     // This is a guess at the number of unique IPs we might see while this eBPF is loaded
     // TODO: Look at clearing out old ips from the list or handling it's size some other way
-} allowed_ips_map SEC(".maps");
+} firewall_ip_map SEC(".maps");
 
 
 /* DNS Proxy Port - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy */
@@ -67,6 +67,17 @@ volatile const __u32 const_dns_proxy_port;
     server.
 */
 volatile const __u32 const_dns_proxy_pid;
+
+/* Firewall mode - This is set by the go code when loading the eBPF so we can run in firewall mode 
+ 0 = allow all outbound - logOnly mode
+ 1 = block all outbound other than items on allow list
+ 2 = block outbound to items on the block list
+*/
+volatile const __u16 const_firewall_mode;
+
+const __u16 FIREWALL_MODE_LOG_ONLY  = 0;
+const __u16 FIREWALL_MODE_ALLOW_LIST = 1;
+const __u16 FIREWALL_MODE_BLOCK_LIST = 2;
 
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx)
@@ -132,7 +143,37 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     //     return 1;
     // }
     /* Check if the destination IPs are in "blocked" map */
-    bool destination_allowed = bpf_map_lookup_elem(&allowed_ips_map, &iph.daddr);
+    bool mode_block_list = const_firewall_mode == FIREWALL_MODE_BLOCK_LIST;
+    bool mode_allow_list = const_firewall_mode == FIREWALL_MODE_ALLOW_LIST;
+    bool mode_log_only = const_firewall_mode == FIREWALL_MODE_LOG_ONLY;
+    
+    // Setup default action based on firewall mode
+    bool destination_allowed = false;
+    if (mode_log_only) {
+        // Logonly: Allow all
+        destination_allowed = true;
+    } else if (mode_block_list) {
+        // Blocklist: Allow by default unless on the block list
+        destination_allowed = true;
+    } else if (mode_allow_list) {
+        // AllowList: Block by default unless on the allow list
+        destination_allowed = false;
+    }
+
+    bool ip_present_in_firewall_list = bpf_map_lookup_elem(&firewall_ip_map, &iph.daddr);
+    
+    // Override destination_allowed based on firewall mode
+    // and whether or not the IP is in the firewall list
+    if (mode_allow_list && ip_present_in_firewall_list) {
+        // Allow list and IP is present - allow
+        destination_allowed = true;
+    } else if (mode_block_list && ip_present_in_firewall_list) {
+        // Block list and IP is present - block
+        destination_allowed = false;
+    } else {
+        // LogOnly mode - allow all
+        destination_allowed = false;
+    }
 
     bool isDNS = false;
     if (iph.protocol == IPPROTO_UDP && skb->remote_port == bpf_htons(53)) {
@@ -140,30 +181,30 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     }
 
     if (destination_allowed) {
-        bpf_trace_printk("IP %x is allowed\n", sizeof("IP %x is allowed\n"), iph.daddr);
-        struct event info = {
-            .pid = bpf_get_current_pid_tgid() >> 32,
-            .port = skb->remote_port,
-            .allowed = true,
-            .ip = iph.daddr,
-            .originalIp = iph.daddr,
-            .isDns = isDNS,
-        };
+        // bpf_trace_printk("IP %x is allowed\n", sizeof("IP %x is allowed\n"), iph.daddr);
+        // struct event info = {
+        //     .pid = bpf_get_current_pid_tgid() >> 32,
+        //     .port = skb->remote_port,
+        //     .allowed = true,
+        //     .ip = iph.daddr,
+        //     .originalIp = iph.daddr,
+        //     .isDns = isDNS,
+        // };
 
-        bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+        // bpf_ringbuf_output(&events, &info, sizeof(info), 0);
         return 1;
     } else {
-        bpf_trace_printk("IP %x is not allowed\n", sizeof("IP %x is not allowed\n"), iph.daddr);
-        struct event info = {
-            .pid = bpf_get_current_pid_tgid() >> 32,
-            .port = skb->remote_port,
-            .allowed = false,
-            .ip = iph.daddr,
-            .originalIp = iph.daddr,
-            .isDns = isDNS,
-        };
+        // bpf_trace_printk("IP %x is not allowed\n", sizeof("IP %x is not allowed\n"), iph.daddr);
+        // struct event info = {
+        //     .pid = bpf_get_current_pid_tgid() >> 32,
+        //     .port = skb->remote_port,
+        //     .allowed = false,
+        //     .ip = iph.daddr,
+        //     .originalIp = iph.daddr,
+        //     .isDns = isDNS,
+        // };
 
-        bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+        // bpf_ringbuf_output(&events, &info, sizeof(info), 0);
         return 0;
     }
 

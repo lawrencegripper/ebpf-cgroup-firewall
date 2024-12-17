@@ -79,8 +79,8 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	AllowedIpsMap  *ebpf.MapSpec `ebpf:"allowed_ips_map"`
 	Events         *ebpf.MapSpec `ebpf:"events"`
+	FirewallIpMap  *ebpf.MapSpec `ebpf:"firewall_ip_map"`
 	ServiceMapping *ebpf.MapSpec `ebpf:"service_mapping"`
 }
 
@@ -103,15 +103,15 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	AllowedIpsMap  *ebpf.Map `ebpf:"allowed_ips_map"`
 	Events         *ebpf.Map `ebpf:"events"`
+	FirewallIpMap  *ebpf.Map `ebpf:"firewall_ip_map"`
 	ServiceMapping *ebpf.Map `ebpf:"service_mapping"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
-		m.AllowedIpsMap,
 		m.Events,
+		m.FirewallIpMap,
 		m.ServiceMapping,
 	)
 }
