@@ -203,36 +203,24 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 
-		if domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
-			if b.dnsFirewall != nil {
-				for _, answer := range resp.Answer {
-					if a, ok := answer.(*dns.A); ok {
-						err = b.dnsFirewall.AllowIP(
-							a.A.String(),
-							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s Matched: %s", a.A.String(), matchedBecause)},
-						)
-						if err != nil {
-							fmt.Printf("Failed to allow IP: %v\n", err)
-						}
-					}
-				}
-			}
-		} else if domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
-			if b.dnsFirewall != nil {
-				for _, answer := range resp.Answer {
-					if a, ok := answer.(*dns.A); ok {
-						err = b.dnsFirewall.AllowIP(
-							a.A.String(),
-							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s Matched: %s", a.A.String(), matchedBecause)},
-						)
-						if err != nil {
-							fmt.Printf("Failed to allow IP: %v\n", err)
-						}
-					}
-				}
-			}
-		} else if b.dnsFirewall.FirewallMethod == ebpf.LogOnly {
+		if b.dnsFirewall.FirewallMethod == ebpf.LogOnly {
 			// Do nothing
+		} else if domainMatchedFirewallDomains {
+			// If it did match add the IPs to the firewall ip list
+			// the matching already decided on the firewall method (allow, block)
+			if b.dnsFirewall != nil {
+				for _, answer := range resp.Answer {
+					if a, ok := answer.(*dns.A); ok {
+						err = b.dnsFirewall.AllowIP(
+							a.A.String(),
+							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s Matched: %s", a.A.String(), matchedBecause)},
+						)
+						if err != nil {
+							fmt.Printf("Failed to allow IP: %v\n", err)
+						}
+					}
+				}
+			}
 		}
 	}
 

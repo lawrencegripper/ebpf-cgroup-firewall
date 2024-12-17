@@ -13,7 +13,7 @@ import (
 func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 	domainsToBlock := []string{"bing.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil, false)
 	require.NoError(t, err)
 
 	defer proxy.Shutdown() // Shutdown the proxy after test
