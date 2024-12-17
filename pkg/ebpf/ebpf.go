@@ -36,6 +36,7 @@ type DnsFirewall struct {
 	Objects              *bpfObjects
 	AllowedIPsWithReason map[string]*Reason
 	RingBufferReader     *ringbuf.Reader
+	FirewallMethod       FirewallMethod
 }
 
 type FirewallMethod uint16
@@ -220,5 +221,6 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 		Link:             &cgroupLink,
 		Objects:          &obj,
 		RingBufferReader: ringBufferEventsReader,
+		FirewallMethod:   firewallMethod,
 	}, nil
 }

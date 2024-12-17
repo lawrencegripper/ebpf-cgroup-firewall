@@ -20,7 +20,7 @@ type DNSProxy struct {
 
 // StartDNSMonitoringProxy configures eBPF to redirect DNS requests for the specified cgroup to a local DNS server
 // which blocks requests to the specified domains.
-func StartDNSMonitoringProxy(listenPort int, allowedDomains []string, firewall *ebpf.DnsFirewall) (*DNSProxy, error) {
+func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.DnsFirewall) (*DNSProxy, error) {
 	// Start the DNS proxy
 	fmt.Printf("Starting DNS server on port %d\n", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
@@ -34,7 +34,7 @@ func StartDNSMonitoringProxy(listenPort int, allowedDomains []string, firewall *
 	fmt.Printf("Using downstream DNS resolver: %s\n", downstreamServerAddr)
 
 	serverHandler := &blockingDNSHandler{
-		allowedDomains:       allowedDomains,
+		firewallDomains:      domains,
 		downstreamClient:     downstreamClient,
 		dnsFirewall:          firewall,
 		DownstreamServerAddr: downstreamServerAddr,
@@ -132,7 +132,7 @@ type dnsBlockResult struct {
 }
 
 type blockingDNSHandler struct {
-	allowedDomains       []string
+	firewallDomains      []string
 	BlockLog             []dnsBlockResult
 	blockLogMu           sync.Mutex
 	DNSLog               map[string]int
@@ -149,8 +149,8 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Authoritative = true
 
 	for _, q := range r.Question {
-		shouldBlock := true
-		blockedBecause := ""
+		domainMatchedFirewallDomains := false
+		matchedBecause := ""
 
 		// Track the DNS request
 		b.dnsLogMu.Lock()
@@ -164,11 +164,11 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		b.dnsLogMu.Unlock()
 
 		// Handle blocking
-		for _, domain := range b.allowedDomains {
+		for _, domain := range b.firewallDomains {
 			if strings.HasSuffix(q.Name, domain+".") {
-				shouldBlock = false
+				domainMatchedFirewallDomains = true
 			} else {
-				blockedBecause = domain
+				matchedBecause = domain
 				// Track that we would block this domain
 				b.blockLogMu.Lock()
 				b.BlockLog = append(b.BlockLog, dnsBlockResult{
@@ -187,16 +187,13 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 
-		// Add them to the allowed list for the firewall
-		if shouldBlock {
-			fmt.Printf("DNS Resolved but IP not allowed, request will be blocked %s.\n", blockedBecause)
-		} else {
+		if domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
 			if b.dnsFirewall != nil {
 				for _, answer := range resp.Answer {
 					if a, ok := answer.(*dns.A); ok {
 						err = b.dnsFirewall.AllowIP(
 							a.A.String(),
-							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s", a.A.String())},
+							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s Matched: %s", a.A.String(), matchedBecause)},
 						)
 						if err != nil {
 							fmt.Printf("Failed to allow IP: %v\n", err)
@@ -204,6 +201,22 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					}
 				}
 			}
+		} else if domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
+			if b.dnsFirewall != nil {
+				for _, answer := range resp.Answer {
+					if a, ok := answer.(*dns.A); ok {
+						err = b.dnsFirewall.AllowIP(
+							a.A.String(),
+							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s Matched: %s", a.A.String(), matchedBecause)},
+						)
+						if err != nil {
+							fmt.Printf("Failed to allow IP: %v\n", err)
+						}
+					}
+				}
+			}
+		} else if b.dnsFirewall.FirewallMethod == ebpf.LogOnly {
+			// Do nothing
 		}
 	}
 

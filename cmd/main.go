@@ -93,19 +93,21 @@ func main() {
 		os.Exit(101)
 	}
 
-	downstreamDnsIP := strings.Split(dns.BlockingDNSHandler.DownstreamServerAddr, ":")[0]
-	err = ebpfFirewall.AllowIP(downstreamDnsIP, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Downstream dns server"})
-	if err != nil {
-		fmt.Printf("Failed to allow IP: %v\n", err)
-		os.Exit(108)
-	}
-
-	// Allow calls to localhost
+	// Allow calls to localhost and upstream dns server
 	// TODO: This is pretty permissive, probably this should be an option for uesrs to decide on
-	err = ebpfFirewall.AllowIP("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
-	if err != nil {
-		fmt.Printf("Failed to allow IP: %v\n", err)
-		os.Exit(108)
+	if firewallMethod == ebpf.AllowList {
+		err = ebpfFirewall.AllowIP("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
+		if err != nil {
+			fmt.Printf("Failed to allow IP: %v\n", err)
+			os.Exit(108)
+		}
+
+		downstreamDnsIP := strings.Split(dns.BlockingDNSHandler.DownstreamServerAddr, ":")[0]
+		err = ebpfFirewall.AllowIP(downstreamDnsIP, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Downstream dns server"})
+		if err != nil {
+			fmt.Printf("Failed to allow IP: %v\n", err)
+			os.Exit(108)
+		}
 	}
 
 	// Add explicitly allowed ips

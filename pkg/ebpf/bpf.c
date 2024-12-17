@@ -99,8 +99,6 @@ int connect4(struct bpf_sock_addr *ctx)
         ctx->user_ip4 = bpf_htonl(0x7f000001);
         ctx->user_port = bpf_htons(const_dns_proxy_port);
 
-
-
         struct event info = {
             .pid = bpf_get_current_pid_tgid() >> 32,
             .port = ctx->user_port,
@@ -138,10 +136,19 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     struct iphdr iph;
     /* Load packet header */
     bpf_skb_load_bytes(skb, 0, &iph, sizeof(struct iphdr));
-    /* Allow requests on 53 as we'll capture these and forward to our DNS server*/
-    // if (skb->remote_port == bpf_htons(53)) {
-    //     return 1;
-    // }
+    // /* Allow requests on 53 as we'll capture these and forward to our DNS server*/
+    if (skb->remote_port == bpf_htons(53)) {
+        struct event info = {
+            .port = skb->remote_port,
+            .allowed = true,
+            .ip = iph.daddr,
+            .originalIp = iph.daddr,
+            .isDns = true,
+        };
+
+        bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+        return 1;
+    }
     /* Check if the destination IPs are in "blocked" map */
     bool mode_block_list = const_firewall_mode == FIREWALL_MODE_BLOCK_LIST;
     bool mode_allow_list = const_firewall_mode == FIREWALL_MODE_ALLOW_LIST;
@@ -164,15 +171,12 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     
     // Override destination_allowed based on firewall mode
     // and whether or not the IP is in the firewall list
-    if (mode_allow_list && ip_present_in_firewall_list) {
-        // Allow list and IP is present - allow
-        destination_allowed = true;
-    } else if (mode_block_list && ip_present_in_firewall_list) {
+    if (mode_block_list && ip_present_in_firewall_list) {
         // Block list and IP is present - block
         destination_allowed = false;
-    } else {
-        // LogOnly mode - allow all
-        destination_allowed = false;
+    } else if (mode_allow_list && ip_present_in_firewall_list) {
+        // Allow list and IP is present - allow
+        destination_allowed = true;
     }
 
     bool isDNS = false;
