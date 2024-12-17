@@ -188,11 +188,13 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if b.refuseAtDNSRequest && !domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
 			m.Rcode = dns.RcodeRefused
 			w.WriteMsg(m)
+			return
 		}
 
 		if b.refuseAtDNSRequest && domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
 			m.Rcode = dns.RcodeRefused
 			w.WriteMsg(m)
+			return
 		}
 
 		resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)

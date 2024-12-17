@@ -15,9 +15,9 @@ import (
 )
 
 type FirewallArgs struct {
-	AllowList        []string `xor:"AllowList,BlockList" help:"IPs or Domains which are allowed"`
-	BlockList        []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
-	RefuseDNSRequest bool     `help:"Refuse DNS requests to blocked domains as well as dropping IP packets"`
+	AllowList       []string `xor:"AllowList,BlockList" help:"IPs or Domains which are allowed"`
+	BlockList       []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
+	AllowDNSRequest bool     `help:"Allow DNS requests to blocked domains, drop packets to those IPs when used"`
 }
 
 var CmdOptions struct {
@@ -85,11 +85,12 @@ func main() {
 		os.Exit(105)
 	}
 
+	refuseAtDNSRequests := !(CmdOptions.Attach.AllowDNSRequest || CmdOptions.Run.AllowDNSRequest)
 	dns, err := dns.StartDNSMonitoringProxy(
 		dnsPort,
 		firewallDomains,
 		ebpfFirewall,
-		CmdOptions.Attach.RefuseDNSRequest || CmdOptions.Run.RefuseDNSRequest,
+		refuseAtDNSRequests,
 	)
 	if err != nil {
 		fmt.Printf("Failed to start DNS blocking proxy: %v\n", err)
