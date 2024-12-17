@@ -181,30 +181,28 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     }
 
     if (destination_allowed) {
-        // bpf_trace_printk("IP %x is allowed\n", sizeof("IP %x is allowed\n"), iph.daddr);
-        // struct event info = {
-        //     .pid = bpf_get_current_pid_tgid() >> 32,
-        //     .port = skb->remote_port,
-        //     .allowed = true,
-        //     .ip = iph.daddr,
-        //     .originalIp = iph.daddr,
-        //     .isDns = isDNS,
-        // };
+        bpf_trace_printk("IP %x is allowed\n", sizeof("IP %x is allowed\n"), iph.daddr);
+        struct event info = {
+            .port = skb->remote_port,
+            .allowed = true,
+            .ip = iph.daddr,
+            .originalIp = iph.daddr,
+            .isDns = isDNS,
+        };
 
-        // bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+        bpf_ringbuf_output(&events, &info, sizeof(info), 0);
         return 1;
     } else {
-        // bpf_trace_printk("IP %x is not allowed\n", sizeof("IP %x is not allowed\n"), iph.daddr);
-        // struct event info = {
-        //     .pid = bpf_get_current_pid_tgid() >> 32,
-        //     .port = skb->remote_port,
-        //     .allowed = false,
-        //     .ip = iph.daddr,
-        //     .originalIp = iph.daddr,
-        //     .isDns = isDNS,
-        // };
+        bpf_trace_printk("IP %x is not allowed\n", sizeof("IP %x is not allowed\n"), iph.daddr);
+        struct event info = {
+            .port = skb->remote_port,
+            .allowed = false,
+            .ip = iph.daddr,
+            .originalIp = iph.daddr,
+            .isDns = isDNS,
+        };
 
-        // bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+        bpf_ringbuf_output(&events, &info, sizeof(info), 0);
         return 0;
     }
 
