@@ -20,7 +20,7 @@ type DNSProxy struct {
 
 // StartDNSMonitoringProxy configures eBPF to redirect DNS requests for the specified cgroup to a local DNS server
 // which blocks requests to the specified domains.
-func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.DnsFirewall) (*DNSProxy, error) {
+func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.DnsFirewall, refuseAtDNSRequest bool) (*DNSProxy, error) {
 	// Start the DNS proxy
 	fmt.Printf("Starting DNS server on port %d\n", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
@@ -39,6 +39,7 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.Dn
 		dnsFirewall:          firewall,
 		DownstreamServerAddr: downstreamServerAddr,
 		DNSLog:               make(map[string]int),
+		refuseAtDNSRequest:   refuseAtDNSRequest,
 	}
 	server := &dns.Server{Addr: fmt.Sprintf(":%d", listenPort), Net: "udp", Handler: serverHandler}
 
@@ -72,7 +73,11 @@ waitStartLoop:
 	}
 
 	// Return a function to stop the DNS server
-	return &DNSProxy{Port: listenPort, Server: server, BlockingDNSHandler: serverHandler}, nil
+	return &DNSProxy{
+		Port:               listenPort,
+		Server:             server,
+		BlockingDNSHandler: serverHandler,
+	}, nil
 }
 
 // HasBlockedDomains checks if there are any domains to be blocked by the DNSProxy.
@@ -140,6 +145,7 @@ type blockingDNSHandler struct {
 	dnsFirewall          *ebpf.DnsFirewall
 	downstreamClient     *dns.Client
 	DownstreamServerAddr string
+	refuseAtDNSRequest   bool
 }
 
 func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
@@ -177,6 +183,16 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				})
 				b.blockLogMu.Unlock()
 			}
+		}
+
+		if b.refuseAtDNSRequest && !domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
+			m.Rcode = dns.RcodeRefused
+			w.WriteMsg(m)
+		}
+
+		if b.refuseAtDNSRequest && domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
+			m.Rcode = dns.RcodeRefused
+			w.WriteMsg(m)
 		}
 
 		resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)
