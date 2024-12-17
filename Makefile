@@ -20,6 +20,9 @@ check-generate: generate ## Check if generate target causes any changes.
 
 .PHONY: build
 build: ## Build the tool
+	@if [ -n "$$(git status --porcelain pkg/ebpf/bpf.c)" ]; then \
+		$(MAKE) generate; \
+	fi
 	go build -v -o bin/ebpf-cgroup-firewall ./cmd/main.go
 
 .PHONY: test

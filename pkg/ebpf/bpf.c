@@ -148,7 +148,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     bool mode_log_only = const_firewall_mode == FIREWALL_MODE_LOG_ONLY;
     
     // Setup default action based on firewall mode
-    bool destination_allowed = false;
+    bool destination_allowed;
     if (mode_log_only) {
         // Logonly: Allow all
         destination_allowed = true;
