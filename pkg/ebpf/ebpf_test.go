@@ -45,7 +45,7 @@ func TestAttachRedirectorToCGroup_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0)
+			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0, LogOnly)
 			assert.EqualError(t, err, tt.expectedError)
 		})
 	}
@@ -60,7 +60,7 @@ func TestAttachRedirectorToCGroup_DoesNotImpactOtherTraffic(t *testing.T) {
 	cgroupPath := path.Join(cgroupDefault, cgroupName)
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0)
+	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0, AllowList)
 	require.NoError(t, err)
 
 	// Start a http server to validate normal requests are not impacted
@@ -79,7 +79,7 @@ func TestAttachRedirectorToCGroup_DoesNotImpactOtherTraffic(t *testing.T) {
 	}()
 	defer httpServer.Close()
 
-	err = firewall.AllowIP("127.0.0.1", nil)
+	err = firewall.AddIPToFirewall("127.0.0.1", nil)
 	require.NoError(t, err)
 
 	cmd := exec.Command("sh", "-c", "sleep 0.1; curl -sL --connect-timeout 1 http://127.0.0.1:5000")
@@ -129,10 +129,10 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	cgroupPathForCurrentProcess = path.Join(cgroup2Mount.Mountpoint, cgroupPathForCurrentProcess)
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0)
+	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0, AllowList)
 	require.NoError(t, err)
 
-	err = firewall.AllowIP("127.0.0.1", nil)
+	err = firewall.AddIPToFirewall("127.0.0.1", nil)
 	require.NoError(t, err)
 
 	cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPathForCurrentProcess)

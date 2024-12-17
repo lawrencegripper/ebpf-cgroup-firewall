@@ -206,12 +206,12 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if b.dnsFirewall.FirewallMethod == ebpf.LogOnly {
 			// Do nothing
 		} else if domainMatchedFirewallDomains {
-			// If it did match add the IPs to the firewall ip list
-			// the matching already decided on the firewall method (allow, block)
 			if b.dnsFirewall != nil {
+				// If it did match add the IPs to the firewall ip list
+				// the matching already decided on the firewall method (allow, block)
 				for _, answer := range resp.Answer {
 					if a, ok := answer.(*dns.A); ok {
-						err = b.dnsFirewall.AllowIP(
+						err = b.dnsFirewall.AddIPToFirewall(
 							a.A.String(),
 							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s Matched: %s", a.A.String(), matchedBecause)},
 						)

@@ -99,14 +99,14 @@ func main() {
 	// Allow calls to localhost and upstream dns server
 	// TODO: This is pretty permissive, probably this should be an option for uesrs to decide on
 	if firewallMethod == ebpf.AllowList {
-		err = ebpfFirewall.AllowIP("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
+		err = ebpfFirewall.AddIPToFirewall("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
 		if err != nil {
 			fmt.Printf("Failed to allow IP: %v\n", err)
 			os.Exit(108)
 		}
 
 		downstreamDnsIP := strings.Split(dns.BlockingDNSHandler.DownstreamServerAddr, ":")[0]
-		err = ebpfFirewall.AllowIP(downstreamDnsIP, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Downstream dns server"})
+		err = ebpfFirewall.AddIPToFirewall(downstreamDnsIP, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Downstream dns server"})
 		if err != nil {
 			fmt.Printf("Failed to allow IP: %v\n", err)
 			os.Exit(108)
@@ -115,7 +115,7 @@ func main() {
 
 	// Add explicitly allowed ips
 	for _, ip := range firewallIps {
-		if err := ebpfFirewall.AllowIP(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allowed by Allowlist"}); err != nil {
+		if err := ebpfFirewall.AddIPToFirewall(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allowed by Allowlist"}); err != nil {
 			fmt.Printf("Failed to allow IP: %v\n", err)
 			os.Exit(108)
 		}

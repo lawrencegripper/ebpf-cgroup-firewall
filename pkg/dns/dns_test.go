@@ -41,7 +41,7 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 func TestDNSProxy_BlocksDomains(t *testing.T) {
 	domainsToBlock := []string{"example.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil, false)
 	require.NoError(t, err)
 	assert.NotNil(t, proxy)
 
@@ -72,7 +72,7 @@ func TestDNSProxy_BlocksDomains(t *testing.T) {
 func TestDNSProxy_Shutdown(t *testing.T) {
 	domainsToBlock := []string{"example.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil, false)
 	require.NoError(t, err)
 	assert.NotNil(t, proxy)
 

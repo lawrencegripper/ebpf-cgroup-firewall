@@ -51,7 +51,12 @@ const (
 // Make it so you can optionally allow a port, if no port set then default to any
 // this gets interesting for the dns based ones, what ports? 443 and 80? we can't really guess
 // hmmm maybe it's ok as just ip allowed.
-func (e *DnsFirewall) AllowIP(ip string, reason *Reason) error {
+
+// AddIPToFirewall adds the specified IP to the firewall's list
+// the FirewallMethod (logonly, allowlist, blocklist) defines how this list is handled
+// In the case where firewall is blocklist, ips added here are blocked, rest art allowed
+// In the case where firewall is allowlist, ips added here are allowed, rest are blocked
+func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 	fmt.Println("Adding IP to firewall_ips_map: ", ip)
 	firewallIps := e.Objects.bpfMaps.FirewallIpMap
 
