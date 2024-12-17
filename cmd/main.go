@@ -14,17 +14,15 @@ import (
 	"github.com/moby/sys/mountinfo"
 )
 
-var CmdOptions struct {
-	Run struct {
-		Command   string   `arg:"" help:"Command to run with firewall" type:"path"`
-		AllowList []string `xor:"AllowList,BlockList" help:"IPs or Domains which are allowed"`
-		BlockList []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
-	} `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
+type FirewallArgs struct {
+	AllowList        []string `xor:"AllowList,BlockList" help:"IPs or Domains which are allowed"`
+	BlockList        []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
+	RefuseDNSRequest bool     `help:"Refuse DNS requests to blocked domains as well as dropping IP packets"`
+}
 
-	Attach struct {
-		AllowList []string `xor:"AllowList,BlockList" help:"IPs or Domains which are allowed"`
-		BlockList []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
-	} `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
+var CmdOptions struct {
+	Run    FirewallArgs `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
+	Attach FirewallArgs `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
 }
 
 func main() {
