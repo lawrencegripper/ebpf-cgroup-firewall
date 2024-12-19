@@ -20,7 +20,7 @@ type DNSProxy struct {
 
 // StartDNSMonitoringProxy configures eBPF to redirect DNS requests for the specified cgroup to a local DNS server
 // which blocks requests to the specified domains.
-func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.DnsFirewall, refuseAtDNSRequest bool) (*DNSProxy, error) {
+func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.DnsFirewall, allowDNSRequestForBlocked bool) (*DNSProxy, error) {
 	// Start the DNS proxy
 	fmt.Printf("Starting DNS server on port %d\n", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
@@ -34,12 +34,12 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.Dn
 	fmt.Printf("Using downstream DNS resolver: %s\n", downstreamServerAddr)
 
 	serverHandler := &blockingDNSHandler{
-		firewallDomains:      domains,
-		downstreamClient:     downstreamClient,
-		dnsFirewall:          firewall,
-		DownstreamServerAddr: downstreamServerAddr,
-		DNSLog:               make(map[string]int),
-		refuseAtDNSRequest:   refuseAtDNSRequest,
+		firewallDomains:           domains,
+		downstreamClient:          downstreamClient,
+		dnsFirewall:               firewall,
+		DownstreamServerAddr:      downstreamServerAddr,
+		DNSLog:                    make(map[string]int),
+		allowDNSRequestForBlocked: allowDNSRequestForBlocked,
 	}
 	server := &dns.Server{Addr: fmt.Sprintf(":%d", listenPort), Net: "udp", Handler: serverHandler}
 
@@ -137,15 +137,15 @@ type dnsBlockResult struct {
 }
 
 type blockingDNSHandler struct {
-	firewallDomains      []string
-	BlockLog             []dnsBlockResult
-	blockLogMu           sync.Mutex
-	DNSLog               map[string]int
-	dnsLogMu             sync.Mutex
-	dnsFirewall          *ebpf.DnsFirewall
-	downstreamClient     *dns.Client
-	DownstreamServerAddr string
-	refuseAtDNSRequest   bool
+	firewallDomains           []string
+	BlockLog                  []dnsBlockResult
+	blockLogMu                sync.Mutex
+	DNSLog                    map[string]int
+	dnsLogMu                  sync.Mutex
+	dnsFirewall               *ebpf.DnsFirewall
+	downstreamClient          *dns.Client
+	DownstreamServerAddr      string
+	allowDNSRequestForBlocked bool
 }
 
 func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
@@ -185,13 +185,13 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 		}
 
-		if b.refuseAtDNSRequest && !domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
+		if !b.allowDNSRequestForBlocked && !domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
 			m.Rcode = dns.RcodeRefused
 			w.WriteMsg(m)
 			return
 		}
 
-		if b.refuseAtDNSRequest && domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
+		if !b.allowDNSRequestForBlocked && domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
 			m.Rcode = dns.RcodeRefused
 			w.WriteMsg(m)
 			return

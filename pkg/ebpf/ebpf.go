@@ -124,9 +124,11 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 
 	// Tell the eBPF program about the DNS proxy PID so it is allowed to send requests to upstream dns servers
 	// without having them redirected back to the proxy
-	err = spec.Variables["const_dns_proxy_pid"].Set(uint32(exemptPID))
-	if err != nil {
-		return nil, fmt.Errorf("setting const_dns_proxy_pid port variable failed: %w", err)
+	if exemptPID == 0 {
+		err = spec.Variables["const_dns_proxy_pid"].Set(uint32(exemptPID))
+		if err != nil {
+			return nil, fmt.Errorf("setting const_dns_proxy_pid port variable failed: %w", err)
+		}
 	}
 
 	// Load the compiled eBPF ELF and load it into the kernel.

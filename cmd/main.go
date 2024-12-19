@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path"
 	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/containerd/cgroups"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/cgroup"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/moby/sys/mountinfo"
@@ -20,8 +22,13 @@ type FirewallArgs struct {
 	AllowDNSRequest bool     `help:"Allow DNS requests to blocked domains, drop packets to those IPs when used"`
 }
 
+type RunArgs struct {
+	FirewallArgs
+	Command string `arg:"" help:"The command to run" type:"path" name:"command"`
+}
+
 var CmdOptions struct {
-	Run    FirewallArgs `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
+	Run    RunArgs      `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
 	Attach FirewallArgs `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
 }
 
@@ -61,36 +68,46 @@ func main() {
 
 	fmt.Println("Let's have a peak at what DNS requests are made by this process on port 53!")
 
-	// Actions should already be running the worker in a cgroup so we can just attach to that
-	// first find it:
-	var pathToCGroupToRunIn string
-	if attach {
-		pathToCGroupToRunIn = GetCGroupForCurrentProcess()
-	} else {
-		panic("not implemented")
-	}
-	fmt.Println("Attaching to cgroup: ", pathToCGroupToRunIn)
-
 	// get a port for the DNS server
 	dnsPort, err := dns.FindUnusedPort()
 	if err != nil {
 		panic("No free ports")
 	}
 
-	// then attach the eBPF program to it
-	ignoreCurrentPid := os.Getpid()
-	ebpfFirewall, err := ebpf.AttachRedirectorToCGroup(pathToCGroupToRunIn, dnsPort, ignoreCurrentPid, firewallMethod)
-	if err != nil {
-		fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
-		os.Exit(105)
+	// Actions should already be running the worker in a cgroup so we can just attach to that
+	// first find it:
+	pathToCGroupToRunIn := GetCGroupForCurrentProcess()
+	var ebpfFirewall *ebpf.DnsFirewall
+	var wrapper *cgroup.CGroupWrapper
+	if attach {
+		// then attach the eBPF program to it
+		ignoreCurrentPid := os.Getpid()
+		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
+			pathToCGroupToRunIn, dnsPort, ignoreCurrentPid, firewallMethod)
+		if err != nil {
+			fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
+			os.Exit(105)
+		}
+	} else {
+		cmd := exec.Command("/bin/bash", "-c", CmdOptions.Run.Command)
+		wrapper, err = cgroup.NewCGroupWrapper(pathToCGroupToRunIn, cmd)
+		if err != nil {
+			fmt.Printf("Failed to create cgroup: %v\n", err)
+			os.Exit(302)
+		}
+		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
+			wrapper.Path, dnsPort, 0, firewallMethod)
+		if err != nil {
+			fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
+			os.Exit(105)
+		}
 	}
 
-	refuseAtDNSRequests := !(CmdOptions.Attach.AllowDNSRequest || CmdOptions.Run.AllowDNSRequest)
 	dns, err := dns.StartDNSMonitoringProxy(
 		dnsPort,
 		firewallDomains,
 		ebpfFirewall,
-		refuseAtDNSRequests,
+		CmdOptions.Attach.AllowDNSRequest || CmdOptions.Run.AllowDNSRequest,
 	)
 	if err != nil {
 		fmt.Printf("Failed to start DNS blocking proxy: %v\n", err)
@@ -125,12 +142,20 @@ func main() {
 	// Now lets wait and see what DNS request happen
 	fmt.Println("DNS monitoring proxy started successfully")
 
-	// In the post hook we'll send a sigint and we can output the log
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	<-c
-
-	fmt.Println("Sig int received, shutting down")
+	// If we're not attaching then we need to run the command in the cgroup
+	if attach {
+		// In the post hook we'll send a sigint and we can output the log
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		<-c
+		fmt.Println("Sig int received, shutting down")
+	} else {
+		err := wrapper.Run()
+		if err != nil {
+			fmt.Printf("Failed to run command in cgroup: %v\n", err)
+			os.Exit(109)
+		}
+	}
 
 	// Write DNS requests log to file
 	requestsFile, err := os.Create("/tmp/dnsrequests.log")
