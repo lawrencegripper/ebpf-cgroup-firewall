@@ -192,14 +192,18 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if !b.allowDNSRequestForBlocked {
 			if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.AllowList {
 				m.Rcode = dns.RcodeRefused
-				w.WriteMsg(m)
+				if err := w.WriteMsg(m); err != nil {
+					fmt.Printf("Failed to write DNS response: %v\n", err)
+				}
 				addToBlockLog(b, q, matchedBecause)
 				return
 			}
 
 			if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.BlockList {
 				m.Rcode = dns.RcodeRefused
-				w.WriteMsg(m)
+				if err := w.WriteMsg(m); err != nil {
+					fmt.Printf("Failed to write DNS response: %v\n", err)
+				}
 				addToBlockLog(b, q, matchedBecause)
 				return
 			}

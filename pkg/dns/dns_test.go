@@ -21,7 +21,7 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, &blockingFirewall, false)
 	require.NoError(t, err)
 
-	defer proxy.Shutdown() // Shutdown the proxy after test
+	defer proxy.Shutdown() //nolint:errcheck // Shutdown the proxy after test
 
 	// Simulate a DNS request to a blocked domain
 	client := new(dns.Client)
@@ -54,7 +54,7 @@ func TestDNSProxy_BlocksDomains(t *testing.T) {
 	assert.NotNil(t, proxy)
 
 	// Shutdown the proxy after test
-	defer proxy.Shutdown()
+	defer proxy.Shutdown() //nolint:errcheck
 
 	// Simulate a DNS request to a blocked domain
 	client := new(dns.Client)
@@ -108,7 +108,7 @@ func TestDNSProxy_RefusesIPv6Requests(t *testing.T) {
 	assert.NotNil(t, proxy)
 
 	// Shutdown the proxy after test
-	defer proxy.Shutdown()
+	defer proxy.Shutdown() //nolint:errcheck
 
 	// Simulate an IPv6 DNS request
 	client := new(dns.Client)

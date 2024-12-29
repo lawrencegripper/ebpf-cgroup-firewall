@@ -28,3 +28,10 @@ build: ## Build the tool
 .PHONY: test
 test: ## Run the tests
 	go test -race -v ./...
+
+.PHONY: lint
+lint:
+	golangci-lint run
+
+.PHONY: ci
+ci: lint generate test build
