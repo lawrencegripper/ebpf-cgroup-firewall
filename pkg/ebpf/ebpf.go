@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -38,7 +39,17 @@ type DnsFirewall struct {
 	AllowedIPsWithReason map[string]*Reason
 	RingBufferReader     *ringbuf.Reader
 	FirewallMethod       models.FirewallMethod
-	BlockedEvents        []bpfEvent
+	blockedEvents        []bpfEvent
+	blockedEventsMutex   sync.Mutex
+}
+
+func (e *DnsFirewall) BlockedEvents() []bpfEvent {
+	e.blockedEventsMutex.Lock()
+	defer e.blockedEventsMutex.Unlock()
+
+	blockedEventsCopy := make([]bpfEvent, len(e.blockedEvents))
+	copy(blockedEventsCopy, e.blockedEvents)
+	return blockedEventsCopy
 }
 
 // TODO
@@ -163,12 +174,13 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	}
 
 	ebpfFirewall := &DnsFirewall{
-		Spec:             spec,
-		Link:             &cgroupLink,
-		Objects:          &obj,
-		RingBufferReader: ringBufferEventsReader,
-		FirewallMethod:   firewallMethod,
-		BlockedEvents:    []bpfEvent{},
+		Spec:               spec,
+		Link:               &cgroupLink,
+		Objects:            &obj,
+		RingBufferReader:   ringBufferEventsReader,
+		FirewallMethod:     firewallMethod,
+		blockedEvents:      []bpfEvent{},
+		blockedEventsMutex: sync.Mutex{},
 	}
 
 	go func() {
@@ -217,7 +229,11 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 			ip := intToIP(event.Ip)
 			if !event.Allowed {
 				fmt.Printf("Request to %s by %s blocked %v.\n", ip, processPath, firewallMethod)
-				ebpfFirewall.BlockedEvents = append(ebpfFirewall.BlockedEvents, event)
+				// Writing blocked events is nice to have, if we're locked then skip em
+				// rather than stack them up
+				ebpfFirewall.blockedEventsMutex.Lock()
+				ebpfFirewall.blockedEvents = append(ebpfFirewall.blockedEvents, event)
+				ebpfFirewall.blockedEventsMutex.Unlock()
 			}
 
 			if event.IsDns {

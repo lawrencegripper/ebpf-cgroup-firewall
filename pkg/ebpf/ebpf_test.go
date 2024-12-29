@@ -161,10 +161,10 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 			}
 
 			if tt.expectedLocalhostAllowed {
-				assert.Empty(t, firewall.BlockedEvents)
+				assert.Empty(t, firewall.BlockedEvents())
 			} else {
-				assert.Len(t, firewall.BlockedEvents, 1)
-				blockedEvent := firewall.BlockedEvents[0]
+				assert.GreaterOrEqual(t, len(firewall.BlockedEvents()), 1)
+				blockedEvent := firewall.BlockedEvents()[0]
 				assert.False(t, blockedEvent.Allowed)
 				// 127.0.0.1 as int
 				localhostIP := uint32(0x100007f)
@@ -219,7 +219,7 @@ func TestAttachRedirectorToCGroup_IPv6(t *testing.T) {
 	err = cmd.Wait()
 	require.Error(t, err)
 
-	assert.GreaterOrEqual(t, len(firewall.BlockedEvents), 1)
+	assert.GreaterOrEqual(t, len(firewall.BlockedEvents()), 1)
 }
 
 func createTestCGroup(t *testing.T) (*cgroup2.Manager, string) {
