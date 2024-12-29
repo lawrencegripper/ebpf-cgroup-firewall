@@ -158,6 +158,17 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		domainMatchedFirewallDomains := false
 		matchedBecause := ""
 
+		// Refuse IPv6 requests not supported atm
+		// TODO: Support IPv6
+		if !b.allowDNSRequestForBlocked && q.Qtype == dns.TypeAAAA {
+			m.Rcode = dns.RcodeRefused
+			err := w.WriteMsg(m)
+			if err != nil {
+				fmt.Printf("Failed to write DNS response: %v\n", err)
+			}
+			return
+		}
+
 		// Track the DNS request
 		b.dnsLogMu.Lock()
 		if count, exists := b.DNSLog[q.Name]; exists {
@@ -173,28 +184,24 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		for _, domain := range b.firewallDomains {
 			if strings.HasSuffix(q.Name, domain+".") {
 				domainMatchedFirewallDomains = true
-			} else {
 				matchedBecause = domain
-				// Track that we would block this domain
-				b.blockLogMu.Lock()
-				b.BlockLog = append(b.BlockLog, dnsBlockResult{
-					MatchedDomainSuffix: domain,
-					DNSRequest:          q.Name,
-				})
-				b.blockLogMu.Unlock()
 			}
 		}
 
-		if !b.allowDNSRequestForBlocked && !domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
-			m.Rcode = dns.RcodeRefused
-			w.WriteMsg(m)
-			return
-		}
+		if !b.allowDNSRequestForBlocked {
+			if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
+				m.Rcode = dns.RcodeRefused
+				w.WriteMsg(m)
+				addToBlockLog(b, q, matchedBecause)
+				return
+			}
 
-		if !b.allowDNSRequestForBlocked && domainMatchedFirewallDomains && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
-			m.Rcode = dns.RcodeRefused
-			w.WriteMsg(m)
-			return
+			if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
+				m.Rcode = dns.RcodeRefused
+				w.WriteMsg(m)
+				addToBlockLog(b, q, matchedBecause)
+				return
+			}
 		}
 
 		resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)
@@ -205,7 +212,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 
-		if b.dnsFirewall.FirewallMethod == ebpf.LogOnly {
+		if b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == ebpf.LogOnly {
 			// Do nothing
 		} else if domainMatchedFirewallDomains {
 			if b.dnsFirewall != nil {
@@ -230,4 +237,13 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if err != nil {
 		fmt.Printf("Failed to write DNS response: %v\n", err)
 	}
+}
+
+func addToBlockLog(b *blockingDNSHandler, q dns.Question, matchedBecause string) {
+	b.blockLogMu.Lock()
+	b.BlockLog = append(b.BlockLog, dnsBlockResult{
+		MatchedDomainSuffix: matchedBecause,
+		DNSRequest:          q.Name,
+	})
+	b.blockLogMu.Unlock()
 }

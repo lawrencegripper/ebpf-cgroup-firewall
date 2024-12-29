@@ -5,15 +5,19 @@ import (
 	"net"
 	"testing"
 
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
+	blockingFirewall := ebpf.DnsFirewall{
+		FirewallMethod: ebpf.BlockList,
+	}
 	domainsToBlock := []string{"bing.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil, false)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, &blockingFirewall, false)
 	require.NoError(t, err)
 
 	defer proxy.Shutdown() // Shutdown the proxy after test
@@ -39,9 +43,12 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 }
 
 func TestDNSProxy_BlocksDomains(t *testing.T) {
+	blockingFirewall := ebpf.DnsFirewall{
+		FirewallMethod: ebpf.BlockList,
+	}
 	domainsToBlock := []string{"example.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil, false)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, &blockingFirewall, false)
 	require.NoError(t, err)
 	assert.NotNil(t, proxy)
 
@@ -90,4 +97,25 @@ func TestFindUnusedPort(t *testing.T) {
 	require.NoError(t, err)
 	err = conn.Close()
 	require.NoError(t, err)
+}
+
+func TestDNSProxy_RefusesIPv6Requests(t *testing.T) {
+	domainsToBlock := []string{"example.com"}
+
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil, false)
+	require.NoError(t, err)
+	assert.NotNil(t, proxy)
+
+	// Shutdown the proxy after test
+	defer proxy.Shutdown()
+
+	// Simulate an IPv6 DNS request
+	client := new(dns.Client)
+	msg := new(dns.Msg)
+	msg.SetQuestion("example.com.", dns.TypeAAAA)
+	resp, _, err := client.Exchange(msg, "127.0.0.1:"+fmt.Sprintf("%d", proxy.Port))
+	require.NoError(t, err)
+
+	// Check that IPv6 requests are refused
+	assert.Equal(t, dns.RcodeRefused, resp.Rcode)
 }
