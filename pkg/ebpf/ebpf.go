@@ -185,7 +185,7 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 
 	go func() {
 		var event bpfEvent
-		var pidCache map[int]string
+		pid2CmdLineCache := map[int]string{}
 		for {
 			record, err := ringBufferEventsReader.Read()
 			if err != nil {
@@ -206,29 +206,22 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 				continue
 			}
 
-			// if event.Pid == 0 {
-			// 	// TODO: Why are we getting pid 0s here?
-			// 	continue
-			// }
-
+			cmdRun := "unknown"
 			// Lookup the processPath for the event
-			processPath, cacheHit := pidCache[int(event.Pid)]
-			if !cacheHit {
-				processPath, err = os.Readlink(fmt.Sprintf("/proc/%d/exe", event.Pid))
-				if err != nil {
-					fmt.Printf("reading process path: %s\n", err)
-				}
-
-				if err != nil {
-					// TODO: I need to handle that between the request and the event ending up here the process might
-					// have exited
-					fmt.Printf("finding process: %s\n", err)
+			if event.PidResolved {
+				cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", event.Pid)
+				cmdlineBytes, err := os.ReadFile(cmdlinePath)
+				if err == nil {
+					// cmdline args are null-terminated, replace nulls with spaces
+					cmdline := string(bytes.ReplaceAll(cmdlineBytes, []byte{0}, []byte{' '}))
+					pid2CmdLineCache[int(event.Pid)] = cmdline
+					cmdRun = cmdline
 				}
 			}
 
 			ip := intToIP(event.Ip)
 			if !event.Allowed {
-				fmt.Printf("Request to %s by %s blocked %v.\n", ip, processPath, firewallMethod)
+				fmt.Printf("Request to %s blocked, PID: %v CMD: '%s'.\n", ip, event.Pid, cmdRun)
 				// Writing blocked events is nice to have, if we're locked then skip em
 				// rather than stack them up
 				ebpfFirewall.blockedEventsMutex.Lock()
@@ -237,7 +230,7 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 			}
 
 			if event.IsDns {
-				fmt.Printf("DNS Request from %s.\n", processPath)
+				fmt.Printf("DNS Request from %s PID: %v.\n", cmdRun, event.Pid)
 			}
 		}
 	}()

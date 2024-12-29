@@ -26,6 +26,7 @@ struct event {
     __be32 ip;
     __be32 originalIp;
     bool isDns;
+    bool pidResolved;
 };
 struct event *unused __attribute__((unused));
 
@@ -59,6 +60,14 @@ struct {
     // TODO: Look at clearing out old ips from the list or handling it's size some other way
 } firewall_ip_map SEC(".maps");
 
+/* Map for tracking socket cookie to pid mapping */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u64);
+    __type(value, __u32);
+    __uint(max_entries, 10000);
+} socket_pid_map SEC(".maps");
+
 
 /* DNS Proxy Port - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy */
 volatile const __u32 const_dns_proxy_port;
@@ -85,6 +94,10 @@ int connect4(struct bpf_sock_addr *ctx)
     struct sockaddr_in sa = {};
     struct svc_addr *orig;
 
+    __u64 socketCookie = bpf_get_socket_cookie(ctx);
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);
+
     /* For DNS Query (*:53) rewire service to backend 127.0.0.1:8853. */
     if (ctx->user_port == bpf_htons(53) && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid) {
         /* Store the original destination so we can map it back when a response is received */
@@ -100,7 +113,8 @@ int connect4(struct bpf_sock_addr *ctx)
         ctx->user_port = bpf_htons(const_dns_proxy_port);
 
         struct event info = {
-            .pid = bpf_get_current_pid_tgid() >> 32,
+            .pid = pid,
+            .pidResolved = true,
             .port = ctx->user_port,
             .allowed = true,
             .ip = ctx->user_ip4,
@@ -186,6 +200,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
 
     if (destination_allowed) {
         bpf_trace_printk("IP %x is allowed\n", sizeof("IP %x is allowed\n"), iph.daddr);
+        
         struct event info = {
             .port = skb->remote_port,
             .allowed = true,
@@ -194,6 +209,11 @@ int cgroup_skb_egress(struct __sk_buff *skb)
             .isDns = isDNS,
         };
 
+        __u64 socketCookie = bpf_get_socket_cookie(skb);
+        __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
+        info.pid = pid ? *pid : 0;
+        info.pidResolved = pid ? true : false;
+        
         bpf_ringbuf_output(&events, &info, sizeof(info), 0);
         return 1;
     } else {
@@ -205,6 +225,11 @@ int cgroup_skb_egress(struct __sk_buff *skb)
             .originalIp = iph.daddr,
             .isDns = isDNS,
         };
+
+        __u64 socketCookie = bpf_get_socket_cookie(skb);
+        __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
+        info.pid = pid ? *pid : 0;
+        info.pidResolved = pid ? true : false;
 
         bpf_ringbuf_output(&events, &info, sizeof(info), 0);
         return 0;

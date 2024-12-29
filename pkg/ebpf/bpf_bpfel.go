@@ -13,14 +13,15 @@ import (
 )
 
 type bpfEvent struct {
-	Pid        uint32
-	Port       uint16
-	Allowed    bool
-	_          [1]byte
-	Ip         uint32
-	OriginalIp uint32
-	IsDns      bool
-	_          [3]byte
+	Pid         uint32
+	Port        uint16
+	Allowed     bool
+	_           [1]byte
+	Ip          uint32
+	OriginalIp  uint32
+	IsDns       bool
+	PidResolved bool
+	_           [2]byte
 }
 
 type bpfSvcAddr struct {
@@ -82,6 +83,7 @@ type bpfMapSpecs struct {
 	Events         *ebpf.MapSpec `ebpf:"events"`
 	FirewallIpMap  *ebpf.MapSpec `ebpf:"firewall_ip_map"`
 	ServiceMapping *ebpf.MapSpec `ebpf:"service_mapping"`
+	SocketPidMap   *ebpf.MapSpec `ebpf:"socket_pid_map"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -106,6 +108,7 @@ type bpfMaps struct {
 	Events         *ebpf.Map `ebpf:"events"`
 	FirewallIpMap  *ebpf.Map `ebpf:"firewall_ip_map"`
 	ServiceMapping *ebpf.Map `ebpf:"service_mapping"`
+	SocketPidMap   *ebpf.Map `ebpf:"socket_pid_map"`
 }
 
 func (m *bpfMaps) Close() error {
@@ -113,6 +116,7 @@ func (m *bpfMaps) Close() error {
 		m.Events,
 		m.FirewallIpMap,
 		m.ServiceMapping,
+		m.SocketPidMap,
 	)
 }
 
