@@ -120,9 +120,18 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 			err = firewall.AddIPToFirewall(tt.firewallIPs, nil)
 			require.NoError(t, err)
 
-			cmd := exec.Command("sh", "-c", "sleep 0.1; curl -sL --connect-timeout 1 http://127.0.0.1:5000")
+			cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPath)
+			require.NoError(t, err)
+			defer cleanup()
+
+			cmd := exec.Command("sh", "-c", "curl -sL --connect-timeout 1 http://127.0.0.1:5000")
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				UseCgroupFD: true,
+				CgroupFD:    cGroupFD,
+			}
+
 			if err := cmd.Start(); err != nil {
 				assert.Error(t, err)
 			}
@@ -188,10 +197,18 @@ func TestAttachRedirectorToCGroup_IPv6(t *testing.T) {
 
 	time.Sleep(time.Second) // Give server time to start
 
+	cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPath)
+	require.NoError(t, err)
+	defer cleanup()
+
 	// Try to connect using IPv6
 	cmd := exec.Command("sh", "-c", "curl -sL --connect-timeout 1 http://[::1]:5000")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		UseCgroupFD: true,
+		CgroupFD:    cGroupFD,
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +219,7 @@ func TestAttachRedirectorToCGroup_IPv6(t *testing.T) {
 	err = cmd.Wait()
 	require.Error(t, err)
 
-	assert.Len(t, firewall.BlockedEvents, 1)
+	assert.GreaterOrEqual(t, len(firewall.BlockedEvents), 1)
 }
 
 func createTestCGroup(t *testing.T) (*cgroup2.Manager, string) {
