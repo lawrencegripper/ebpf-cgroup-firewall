@@ -15,6 +15,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 )
 
 type AllowKind int
@@ -36,16 +37,9 @@ type DnsFirewall struct {
 	Objects              *bpfObjects
 	AllowedIPsWithReason map[string]*Reason
 	RingBufferReader     *ringbuf.Reader
-	FirewallMethod       FirewallMethod
+	FirewallMethod       models.FirewallMethod
+	BlockedEvents        []bpfEvent
 }
-
-type FirewallMethod uint16
-
-const (
-	LogOnly   FirewallMethod = 0
-	AllowList FirewallMethod = 1
-	BlockList FirewallMethod = 2
-)
 
 // TODO
 // Make it so you can optionally allow a port, if no port set then default to any
@@ -92,7 +86,7 @@ func ipToInt(val string) uint32 {
 //   - cGroupPath: The filesystem path to the cgroup where the eBPF program will be attached.
 //   - dnsProxyPort: The port number on localhost to which DNS requests should be forwarded.
 //   - exemptPID: The PID of the DNS proxy process that should be exempt from redirection to allow calling upstream dns server.
-func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int, firewallMethod FirewallMethod) (*DnsFirewall, error) {
+func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int, firewallMethod models.FirewallMethod) (*DnsFirewall, error) {
 	// Remove resource limits for kernels <5.11.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("removing memlock: %w", err)
@@ -168,6 +162,15 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 		return nil, fmt.Errorf("opening ringbuf reader: %w", err)
 	}
 
+	ebpfFirewall := &DnsFirewall{
+		Spec:             spec,
+		Link:             &cgroupLink,
+		Objects:          &obj,
+		RingBufferReader: ringBufferEventsReader,
+		FirewallMethod:   firewallMethod,
+		BlockedEvents:    []bpfEvent{},
+	}
+
 	go func() {
 		var event bpfEvent
 		var pidCache map[int]string
@@ -191,10 +194,10 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 				continue
 			}
 
-			if event.Pid == 0 {
-				// TODO: Why are we getting pid 0s here?
-				continue
-			}
+			// if event.Pid == 0 {
+			// 	// TODO: Why are we getting pid 0s here?
+			// 	continue
+			// }
 
 			// Lookup the processPath for the event
 			processPath, cacheHit := pidCache[int(event.Pid)]
@@ -213,7 +216,8 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 
 			ip := intToIP(event.Ip)
 			if !event.Allowed {
-				fmt.Printf("Request to %s by %s blocked. No allowed IP.\n", ip, processPath)
+				fmt.Printf("Request to %s by %s blocked %v.\n", ip, processPath, firewallMethod)
+				ebpfFirewall.BlockedEvents = append(ebpfFirewall.BlockedEvents, event)
 			}
 
 			if event.IsDns {
@@ -223,11 +227,5 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	}()
 
 	fmt.Printf("Successfully attached eBPF programs to cgroup blocking network traffic\n")
-	return &DnsFirewall{
-		Spec:             spec,
-		Link:             &cgroupLink,
-		Objects:          &obj,
-		RingBufferReader: ringBufferEventsReader,
-		FirewallMethod:   firewallMethod,
-	}, nil
+	return ebpfFirewall, nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/cgroup"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/moby/sys/mountinfo"
 )
 
@@ -36,7 +37,7 @@ func main() {
 	var attach bool
 	var allowList []string
 	var blockList []string
-	var firewallMethod ebpf.FirewallMethod
+	var firewallMethod models.FirewallMethod
 
 	ctx := kong.Parse(&CmdOptions)
 	fmt.Println(ctx.Command())
@@ -55,12 +56,12 @@ func main() {
 
 	firewallList := make([]string, 0)
 	if len(allowList) == 0 && len(blockList) == 0 {
-		firewallMethod = ebpf.LogOnly
+		firewallMethod = models.LogOnly
 	} else if len(allowList) > 0 {
-		firewallMethod = ebpf.AllowList
+		firewallMethod = models.AllowList
 		firewallList = allowList
 	} else {
-		firewallMethod = ebpf.BlockList
+		firewallMethod = models.BlockList
 		firewallList = blockList
 	}
 
@@ -116,7 +117,7 @@ func main() {
 
 	// Allow calls to localhost and upstream dns server
 	// TODO: This is pretty permissive, probably this should be an option for uesrs to decide on
-	if firewallMethod == ebpf.AllowList {
+	if firewallMethod == models.AllowList {
 		err = ebpfFirewall.AddIPToFirewall("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
 		if err != nil {
 			fmt.Printf("Failed to allow IP: %v\n", err)

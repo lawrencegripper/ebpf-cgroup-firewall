@@ -16,6 +16,7 @@ import (
 
 	"github.com/containerd/cgroups"
 	"github.com/containerd/cgroups/v3/cgroup2"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/moby/sys/mountinfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,91 +46,140 @@ func TestAttachRedirectorToCGroup_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0, LogOnly)
+			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0, models.LogOnly)
 			assert.EqualError(t, err, tt.expectedError)
 		})
 	}
 }
 
-func TestAttachRedirectorToCGroup_DoesNotImpactOtherTraffic(t *testing.T) {
+func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
+	tests := []struct {
+		name                     string
+		firewallMode             models.FirewallMethod
+		firewallIPs              string
+		expectedLocalhostAllowed bool
+	}{
+		// Each test will request 127.0.0.1:5000 http
+		// server we're running
+		{
+			name:                     "AllowList: Allows Request to allowed IP",
+			firewallMode:             models.AllowList,
+			firewallIPs:              "127.0.0.1",
+			expectedLocalhostAllowed: true,
+		},
+		{
+			name:                     "AllowList: Blocks Request to other IP",
+			firewallMode:             models.AllowList,
+			firewallIPs:              "172.1.1.1",
+			expectedLocalhostAllowed: false,
+		},
+		{
+			name:                     "BlockList: Allows Request to other IP",
+			firewallMode:             models.BlockList,
+			firewallIPs:              "172.1.1.1",
+			expectedLocalhostAllowed: true,
+		},
+		{
+			name:                     "BlockList: Blocks Request to blocked IP",
+			firewallMode:             models.BlockList,
+			firewallIPs:              "127.0.0.1",
+			expectedLocalhostAllowed: false,
+		},
+		{
+			name:                     "LogMode: Requests allowed",
+			firewallMode:             models.LogOnly,
+			firewallIPs:              "127.0.0.1",
+			expectedLocalhostAllowed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cgroupMan, cgroupPath := createTestCGroup(t)
+
+			redirectDNSToPort := 55555
+			firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0, tt.firewallMode)
+			require.NoError(t, err)
+
+			// Start a http server to validate normal requests are not impacted
+			httpServer := &http.Server{
+				Addr: ":5000",
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if _, err := fmt.Fprintln(w, "hi"); err != nil {
+						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					}
+				}),
+			}
+			go func() {
+				if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					assert.Error(t, err)
+				}
+			}()
+			defer httpServer.Close()
+
+			err = firewall.AddIPToFirewall(tt.firewallIPs, nil)
+			require.NoError(t, err)
+
+			cmd := exec.Command("sh", "-c", "sleep 0.1; curl -sL --connect-timeout 1 http://127.0.0.1:5000")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Start(); err != nil {
+				assert.Error(t, err)
+			}
+
+			err = cgroupMan.AddProc(uint64(cmd.Process.Pid))
+			if err != nil {
+				assert.Error(t, err)
+			}
+
+			cmdChan := make(chan error, 1)
+			go func() {
+				err := cmd.Wait()
+				cmdChan <- err
+			}()
+
+			select {
+			case <-time.After(5 * time.Second):
+				if tt.expectedLocalhostAllowed {
+					t.Fatal("Timeout waiting for command to finish")
+				}
+			case err := <-cmdChan:
+				if tt.expectedLocalhostAllowed {
+					require.NoError(t, err)
+				} else {
+					require.Error(t, err)
+				}
+			}
+
+			if tt.expectedLocalhostAllowed {
+				assert.Empty(t, firewall.BlockedEvents)
+			} else {
+				assert.Len(t, firewall.BlockedEvents, 1)
+				blockedEvent := firewall.BlockedEvents[0]
+				assert.False(t, blockedEvent.Allowed)
+				// 127.0.0.1 as int
+				localhostIP := uint32(0x100007f)
+				assert.Equal(t, localhostIP, blockedEvent.Ip)
+			}
+		})
+	}
+}
+
+func createTestCGroup(t *testing.T) (*cgroup2.Manager, string) {
 	cgroupDefault := "/sys/fs/cgroup/unified"
-	cgroupName := "/test-cgroup-name"
+	cgroupName := fmt.Sprintf("/test-cgroup-name-%d", time.Now().UnixNano())
 	cgroupMan, err := cgroup2.NewManager(cgroupDefault, cgroupName, &cgroup2.Resources{})
 	require.NoError(t, err)
 
 	cgroupPath := path.Join(cgroupDefault, cgroupName)
-
-	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0, AllowList)
-	require.NoError(t, err)
-
-	// Start a http server to validate normal requests are not impacted
-	httpServer := &http.Server{
-		Addr: ":5000",
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if _, err := fmt.Fprintln(w, "hi"); err != nil {
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			}
-		}),
-	}
-	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			assert.Error(t, err)
-		}
-	}()
-	defer httpServer.Close()
-
-	err = firewall.AddIPToFirewall("127.0.0.1", nil)
-	require.NoError(t, err)
-
-	cmd := exec.Command("sh", "-c", "sleep 0.1; curl -sL --connect-timeout 1 http://127.0.0.1:5000")
-	if err := cmd.Start(); err != nil {
-		assert.Error(t, err)
-	}
-
-	err = cgroupMan.AddProc(uint64(cmd.Process.Pid))
-	if err != nil {
-		assert.Error(t, err)
-	}
-
-	cmdChan := make(chan error, 1)
-	go func() {
-		cmdChan <- cmd.Wait()
-	}()
-
-	select {
-	case <-time.After(5 * time.Second):
-		t.Fatal("Timeout waiting for command to finish")
-	case err := <-cmdChan:
-		require.NoError(t, err)
-	}
-
-	require.NoError(t, err)
+	return cgroupMan, cgroupPath
 }
 
 func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
-	cgroupProcFile := fmt.Sprintf("/proc/%d/cgroup", os.Getpid())
-	_, cgroupPathForCurrentProcess, err := cgroups.ParseCgroupFileUnified(cgroupProcFile)
-	if err != nil {
-		fmt.Printf("Failed to get cgroup path: %v\n", err)
-		os.Exit(102)
-	}
-
-	mounts, err := mountinfo.GetMounts(mountinfo.FSTypeFilter("cgroup2"))
-	if err != nil {
-		fmt.Printf("failed to get cgroup2 mounts: %s\n", err.Error())
-		os.Exit(103)
-	}
-	if len(mounts) == 0 {
-		fmt.Printf("no cgroup2 mounts found\n")
-		os.Exit(104)
-	}
-	cgroup2Mount := mounts[0]
-
-	cgroupPathForCurrentProcess = path.Join(cgroup2Mount.Mountpoint, cgroupPathForCurrentProcess)
+	cgroupPathForCurrentProcess := getCurrentCGroup()
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0, AllowList)
+	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0, models.AllowList)
 	require.NoError(t, err)
 
 	err = firewall.AddIPToFirewall("127.0.0.1", nil)
@@ -197,6 +247,29 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	case <-cmdFinished:
 		t.Fatal("NSLookup command ran but not dns query intercepted")
 	}
+}
+
+func getCurrentCGroup() string {
+	cgroupProcFile := fmt.Sprintf("/proc/%d/cgroup", os.Getpid())
+	_, cgroupPathForCurrentProcess, err := cgroups.ParseCgroupFileUnified(cgroupProcFile)
+	if err != nil {
+		fmt.Printf("Failed to get cgroup path: %v\n", err)
+		os.Exit(102)
+	}
+
+	mounts, err := mountinfo.GetMounts(mountinfo.FSTypeFilter("cgroup2"))
+	if err != nil {
+		fmt.Printf("failed to get cgroup2 mounts: %s\n", err.Error())
+		os.Exit(103)
+	}
+	if len(mounts) == 0 {
+		fmt.Printf("no cgroup2 mounts found\n")
+		os.Exit(104)
+	}
+	cgroup2Mount := mounts[0]
+
+	cgroupPathForCurrentProcess = path.Join(cgroup2Mount.Mountpoint, cgroupPathForCurrentProcess)
+	return cgroupPathForCurrentProcess
 }
 
 // fileDescriptorForCGroupPath returns a file descriptor for the cgroup, this is used when attaching a cmd to the cgroup

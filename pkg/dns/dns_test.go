@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,7 +14,7 @@ import (
 
 func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 	blockingFirewall := ebpf.DnsFirewall{
-		FirewallMethod: ebpf.BlockList,
+		FirewallMethod: models.BlockList,
 	}
 	domainsToBlock := []string{"bing.com"}
 
@@ -44,7 +45,7 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 
 func TestDNSProxy_BlocksDomains(t *testing.T) {
 	blockingFirewall := ebpf.DnsFirewall{
-		FirewallMethod: ebpf.BlockList,
+		FirewallMethod: models.BlockList,
 	}
 	domainsToBlock := []string{"example.com"}
 

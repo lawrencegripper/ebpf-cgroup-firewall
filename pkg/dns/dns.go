@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/miekg/dns"
 )
 
@@ -189,14 +190,14 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 
 		if !b.allowDNSRequestForBlocked {
-			if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == ebpf.AllowList {
+			if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.AllowList {
 				m.Rcode = dns.RcodeRefused
 				w.WriteMsg(m)
 				addToBlockLog(b, q, matchedBecause)
 				return
 			}
 
-			if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == ebpf.BlockList {
+			if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.BlockList {
 				m.Rcode = dns.RcodeRefused
 				w.WriteMsg(m)
 				addToBlockLog(b, q, matchedBecause)
@@ -212,7 +213,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 
-		if b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == ebpf.LogOnly {
+		if b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.LogOnly {
 			// Do nothing
 		} else if domainMatchedFirewallDomains {
 			if b.dnsFirewall != nil {
