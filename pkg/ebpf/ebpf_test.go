@@ -165,6 +165,46 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 	}
 }
 
+func TestAttachRedirectorToCGroup_IPv6(t *testing.T) {
+	cgroupMan, cgroupPath := createTestCGroup(t)
+
+	redirectDNSToPort := 55555
+	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0, models.AllowList)
+	require.NoError(t, err)
+
+	// Start a http server on IPv6
+	httpServer := &http.Server{
+		Addr: "[::1]:5000",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(w, "hi")
+		}),
+	}
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			t.Logf("HTTP server error: %v", err)
+		}
+	}()
+	defer httpServer.Close()
+
+	time.Sleep(time.Second) // Give server time to start
+
+	// Try to connect using IPv6
+	cmd := exec.Command("sh", "-c", "curl -sL --connect-timeout 1 http://[::1]:5000")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	err = cgroupMan.AddProc(uint64(cmd.Process.Pid))
+	require.NoError(t, err)
+
+	err = cmd.Wait()
+	require.Error(t, err)
+
+	assert.Len(t, firewall.BlockedEvents, 1)
+}
+
 func createTestCGroup(t *testing.T) (*cgroup2.Manager, string) {
 	cgroupDefault := "/sys/fs/cgroup/unified"
 	cgroupName := fmt.Sprintf("/test-cgroup-name-%d", time.Now().UnixNano())
