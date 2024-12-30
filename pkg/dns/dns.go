@@ -184,6 +184,8 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
 				addToBlockLog(b, q, matchedBecause)
+
+				slog.Warn("DNS BLOCKED", "reason", "NotInAllowList", "explaination", "Domain doesn't match any allowlist prefixes", "blocked", true, "domain", q.Name)
 				return
 			}
 
@@ -193,6 +195,10 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
 				addToBlockLog(b, q, matchedBecause)
+
+				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
+
+				slog.Warn("DNS BLOCKED", "reason", "FromDNSRequest", "explaination", explaination, "blocked", true, "domain", q.Name)
 				return
 			}
 		}
@@ -215,7 +221,10 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					if a, ok := answer.(*dns.A); ok {
 						err = b.dnsFirewall.AddIPToFirewall(
 							a.A.String(),
-							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)},
+							&ebpf.Reason{
+								Kind:    ebpf.FromDnsRequest,
+								Comment: fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause),
+							},
 						)
 						if err != nil {
 							slog.Error("Failed to allow IP", logger.SlogError(err))

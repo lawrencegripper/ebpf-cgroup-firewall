@@ -61,7 +61,7 @@ func main() {
 	if logger.ShowDebugLogs {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	} else {
-		slog.SetLogLoggerLevel(slog.LevelWarn)
+		slog.SetLogLoggerLevel(slog.LevelInfo)
 	}
 
 	firewallList := make([]string, 0)

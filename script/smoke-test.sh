@@ -46,6 +46,9 @@ run_firewall_test() {
     local args="$1"
     local cmd="$2"
 
+    echo -e "\033[0;34m⬇️ Command:\033[0m"
+    echo "run $args \"$cmd\"" | pr -to10
+
     set +e
     cmdOutput=$(./bin/ebpf-cgroup-firewall run $args "$cmd" 2>&1)
     exitCode=$?

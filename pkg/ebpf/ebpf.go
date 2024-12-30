@@ -36,24 +36,24 @@ type Reason struct {
 func (r *Reason) KindHumanReadable() string {
 	switch r.Kind {
 	case UserSpecified:
-		return "User Specified"
+		return "UserSpecified"
 	case FromDnsRequest:
-		return "From DNS Request"
+		return "FromDNSRequest"
 	default:
 		return "Unknown"
 	}
 }
 
 type DnsFirewall struct {
-	Spec                 *ebpf.CollectionSpec
-	Link                 *link.Link
-	Programs             bpfPrograms
-	Objects              *bpfObjects
-	AllowedIPsWithReason map[string]*Reason
-	RingBufferReader     *ringbuf.Reader
-	FirewallMethod       models.FirewallMethod
-	blockedEvents        []bpfEvent
-	blockedEventsMutex   sync.Mutex
+	Spec                  *ebpf.CollectionSpec
+	Link                  *link.Link
+	Programs              bpfPrograms
+	Objects               *bpfObjects
+	FirewallIPsWithReason map[string]*Reason
+	RingBufferReader      *ringbuf.Reader
+	FirewallMethod        models.FirewallMethod
+	blockedEvents         []bpfEvent
+	blockedEventsMutex    sync.Mutex
 }
 
 func (e *DnsFirewall) BlockedEvents() []bpfEvent {
@@ -84,11 +84,11 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
 	}
 
-	if e.AllowedIPsWithReason == nil {
-		e.AllowedIPsWithReason = make(map[string]*Reason)
+	if e.FirewallIPsWithReason == nil {
+		e.FirewallIPsWithReason = make(map[string]*Reason)
 	}
 
-	e.AllowedIPsWithReason[ip] = reason
+	e.FirewallIPsWithReason[ip] = reason
 
 	return nil
 }
@@ -199,6 +199,7 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	go func() {
 		var event bpfEvent
 		pid2CmdLineCache := map[int]string{}
+
 		for {
 			record, err := ringBufferEventsReader.Read()
 			if err != nil {
@@ -232,15 +233,34 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 				}
 			}
 
-			reason := ebpfFirewall.AllowedIPsWithReason[intToIP(event.Ip).String()]
+			var reasonText string
+			var explaination string
+			reason := ebpfFirewall.FirewallIPsWithReason[intToIP(event.Ip).String()]
+			if reason == nil {
+				if ebpfFirewall.FirewallMethod == models.AllowList {
+					reasonText = "NotInAllowList"
+					explaination = "Domain doesn't match any allowlist prefixes"
+				} else {
+					reasonText = "Unknown"
+				}
+			} else {
+				reasonText = reason.KindHumanReadable()
+				explaination = reason.Comment
+			}
 
 			ip := intToIP(event.Ip)
 			if !event.Allowed {
-				if reason == nil {
-					slog.Warn("Packet BLOCKED", "blocked", !event.Allowed, "ip", ip, "pid", event.Pid, "cmd", cmdRun, "reason", "Unknown")
-				} else {
-					slog.Warn("Packet BLOCKED", "blocked", !event.Allowed, "ip", ip, "pid", event.Pid, "cmd", cmdRun, "why", reason.KindHumanReadable(), "reason", reason.Comment)
-				}
+				slog.Warn(
+					"Packet BLOCKED",
+					"blocked", !event.Allowed,
+					"ip", ip,
+					"pid", event.Pid,
+					"cmd", cmdRun,
+					"reason", reasonText,
+					"explaination", explaination,
+					"firewallMethod", ebpfFirewall.FirewallMethod.String(),
+				)
+
 				// Writing blocked events is nice to have, if we're locked then skip em
 				// rather than stack them up
 				ebpfFirewall.blockedEventsMutex.Lock()
