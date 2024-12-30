@@ -1,5 +1,10 @@
 package models
 
+import (
+	"encoding/binary"
+	"net"
+)
+
 type FirewallMethod uint16
 
 const (
@@ -19,4 +24,9 @@ func (f FirewallMethod) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+func IPToInt(val string) uint32 {
+	ip := net.ParseIP(val).To4()
+	return binary.LittleEndian.Uint32(ip)
 }

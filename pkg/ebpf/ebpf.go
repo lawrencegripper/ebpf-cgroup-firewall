@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/cilium/ebpf"
@@ -44,6 +45,18 @@ func (r *Reason) KindHumanReadable() string {
 	}
 }
 
+type DomainList struct {
+	Domains []string
+}
+
+func (d *DomainList) AddDomain(domain string) {
+	d.Domains = append(d.Domains, domain)
+}
+
+func (d *DomainList) String() string {
+	return strings.Join(d.Domains, ",")
+}
+
 type DnsFirewall struct {
 	Spec                  *ebpf.CollectionSpec
 	Link                  *link.Link
@@ -54,6 +67,7 @@ type DnsFirewall struct {
 	FirewallMethod        models.FirewallMethod
 	blockedEvents         []bpfEvent
 	blockedEventsMutex    sync.Mutex
+	ipDomainTracking      map[string]*DomainList
 }
 
 func (e *DnsFirewall) BlockedEvents() []bpfEvent {
@@ -78,7 +92,7 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 	slog.Debug("Adding IP to firewall_ips_map", "ip", ip)
 	firewallIps := e.Objects.bpfMaps.FirewallIpMap
 
-	err := firewallIps.Put(ipToInt(ip), ipToInt(ip))
+	err := firewallIps.Put(models.IPToInt(ip), models.IPToInt(ip))
 	if err != nil {
 		slog.Error("adding IP to allowed_ips_map", "error", err)
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
@@ -93,16 +107,22 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 	return nil
 }
 
+func (e *DnsFirewall) TrackIPToDomain(ip string, domain string) {
+	slog.Debug("Tracking IP to domain", "ip", ip, "domain", domain)
+	_, exists := e.ipDomainTracking[ip]
+	if !exists {
+		e.ipDomainTracking[ip] = &DomainList{}
+	}
+
+	domainList := e.ipDomainTracking[ip]
+	domainList.AddDomain(domain)
+}
+
 func intToIP(val uint32) net.IP {
 	var bytes [4]byte
 	binary.LittleEndian.PutUint32(bytes[:], val)
 
 	return net.IPv4(bytes[0], bytes[1], bytes[2], bytes[3])
-}
-
-func ipToInt(val string) uint32 {
-	ip := net.ParseIP(val).To4()
-	return binary.LittleEndian.Uint32(ip)
 }
 
 // AttachRedirectorToCGroup attaches the eBPF program to the cgroup at the specified path.
@@ -194,86 +214,92 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 		FirewallMethod:     firewallMethod,
 		blockedEvents:      []bpfEvent{},
 		blockedEventsMutex: sync.Mutex{},
+		ipDomainTracking:   map[string]*DomainList{},
 	}
 
-	go func() {
-		var event bpfEvent
-		pid2CmdLineCache := map[int]string{}
-
-		for {
-			record, err := ringBufferEventsReader.Read()
-			if err != nil {
-				if errors.Is(err, ringbuf.ErrClosed) {
-					slog.Debug("Received signal, exiting..")
-
-					return
-				}
-				slog.Error("reading from ringbuf reader", logger.SlogError(err))
-
-				continue
-			}
-
-			// Parse the ringbuf event entry into a bpfEvent structure.
-			if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
-				slog.Error("parsing ringbuf event", logger.SlogError(err))
-
-				continue
-			}
-
-			cmdRun := "unknown"
-			// Lookup the processPath for the event
-			if event.PidResolved {
-				cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", event.Pid)
-				cmdlineBytes, err := os.ReadFile(cmdlinePath)
-				if err == nil {
-					// cmdline args are null-terminated, replace nulls with spaces
-					cmdline := string(bytes.ReplaceAll(cmdlineBytes, []byte{0}, []byte{' '}))
-					pid2CmdLineCache[int(event.Pid)] = cmdline
-					cmdRun = cmdline
-				}
-			}
-
-			var reasonText string
-			var explaination string
-			reason := ebpfFirewall.FirewallIPsWithReason[intToIP(event.Ip).String()]
-			if reason == nil {
-				if ebpfFirewall.FirewallMethod == models.AllowList {
-					reasonText = "NotInAllowList"
-					explaination = "Domain doesn't match any allowlist prefixes"
-				} else {
-					reasonText = "Unknown"
-				}
-			} else {
-				reasonText = reason.KindHumanReadable()
-				explaination = reason.Comment
-			}
-
-			ip := intToIP(event.Ip)
-			if !event.Allowed {
-				slog.Warn(
-					"Packet BLOCKED",
-					"blocked", !event.Allowed,
-					"ip", ip,
-					"pid", event.Pid,
-					"cmd", cmdRun,
-					"reason", reasonText,
-					"explaination", explaination,
-					"firewallMethod", ebpfFirewall.FirewallMethod.String(),
-				)
-
-				// Writing blocked events is nice to have, if we're locked then skip em
-				// rather than stack them up
-				ebpfFirewall.blockedEventsMutex.Lock()
-				ebpfFirewall.blockedEvents = append(ebpfFirewall.blockedEvents, event)
-				ebpfFirewall.blockedEventsMutex.Unlock()
-			}
-
-			if event.IsDns {
-				slog.Info("DNS Request", "cmd", cmdRun, "pid", event.Pid)
-			}
-		}
-	}()
+	go ebpfFirewall.monitorRingBufferEventfunc()
 
 	slog.Debug("Successfully attached eBPF programs to cgroup blocking network traffic")
 	return ebpfFirewall, nil
+}
+
+func (e *DnsFirewall) monitorRingBufferEventfunc() {
+	var event bpfEvent
+	pid2CmdLineCache := map[int]string{}
+
+	for {
+		record, err := e.RingBufferReader.Read()
+		if err != nil {
+			if errors.Is(err, ringbuf.ErrClosed) {
+				slog.Debug("Received signal, exiting..")
+
+				return
+			}
+			slog.Error("reading from ringbuf reader", logger.SlogError(err))
+
+			continue
+		}
+
+		// Parse the ringbuf event entry into a bpfEvent structure.
+		if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
+			slog.Error("parsing ringbuf event", logger.SlogError(err))
+
+			continue
+		}
+
+		cmdRun := "unknown"
+		// Lookup the processPath for the event
+		if event.PidResolved {
+			cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", event.Pid)
+			cmdlineBytes, err := os.ReadFile(cmdlinePath)
+			if err == nil {
+				// cmdline args are null-terminated, replace nulls with spaces
+				cmdline := string(bytes.ReplaceAll(cmdlineBytes, []byte{0}, []byte{' '}))
+				pid2CmdLineCache[int(event.Pid)] = cmdline
+				cmdRun = cmdline
+			}
+		}
+
+		var reasonText string
+		var explaination string
+		reason := e.FirewallIPsWithReason[intToIP(event.Ip).String()]
+		if reason == nil {
+			if e.FirewallMethod == models.AllowList {
+				reasonText = "NotInAllowList"
+				explaination = "Domain doesn't match any allowlist prefixes"
+			} else {
+				reasonText = "Unknown"
+			}
+		} else {
+			reasonText = reason.KindHumanReadable()
+			explaination = reason.Comment
+		}
+
+		slog.Debug("trackingDomains", "domains", e.ipDomainTracking)
+
+		ip := intToIP(event.Ip)
+		if !event.Allowed {
+			slog.Warn(
+				"Packet BLOCKED",
+				"blocked", !event.Allowed,
+				"ip", ip,
+				"ipResolvedForDomains", e.ipDomainTracking[ip.String()].String(),
+				"pid", event.Pid,
+				"cmd", cmdRun,
+				"reason", reasonText,
+				"explaination", explaination,
+				"firewallMethod", e.FirewallMethod.String(),
+			)
+
+			// Writing blocked events is nice to have, if we're locked then skip em
+			// rather than stack them up
+			e.blockedEventsMutex.Lock()
+			e.blockedEvents = append(e.blockedEvents, event)
+			e.blockedEventsMutex.Unlock()
+		}
+
+		if event.IsDns {
+			slog.Debug("DNS Request", "cmd", cmdRun, "pid", event.Pid)
+		}
+	}
 }

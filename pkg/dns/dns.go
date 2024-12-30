@@ -211,6 +211,13 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 
+		// Used for logging where an IP came from
+		for _, answer := range resp.Answer {
+			if a, ok := answer.(*dns.A); ok {
+				b.dnsFirewall.TrackIPToDomain(a.A.String(), q.Name)
+			}
+		}
+
 		if b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.LogOnly {
 			// Do nothing
 		} else if domainMatchedFirewallDomains {
