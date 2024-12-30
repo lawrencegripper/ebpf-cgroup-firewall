@@ -105,3 +105,16 @@ open_fold "AllowList: Block bing when only google allowed (allow dns resolution)
     assert_output_contains "blocked"
 
 close_fold
+
+open_fold "LogFile: Test --log-file option"
+
+    log_file="/tmp/firewall_test.log"
+    run_firewall_test "--block-list google.com --log-file $log_file" "curl -s --max-time 1 google.com"
+    assert_exit_code 6
+
+    echo -e "\033[0;34m⬇️ Log File Output:\033[0m"
+    cat "$log_file" | pr -to10
+    cmdOutput=$(cat "$log_file")
+    assert_output_contains "Matched Domain Prefix: google.com"
+
+close_fold

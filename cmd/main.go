@@ -24,6 +24,7 @@ type FirewallArgs struct {
 	BlockList       []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
 	AllowDNSRequest bool     `help:"Allow DNS requests to blocked domains, drop packets to those IPs when used"`
 	Debug           bool     `help:"Print debugging logs"`
+	LogFile         *string  `help:"File to write logs to" type:"path"`
 }
 
 type RunArgs struct {
@@ -41,6 +42,7 @@ func main() {
 	var allowList []string
 	var blockList []string
 	var firewallMethod models.FirewallMethod
+	var logfile string
 
 	ctx := kong.Parse(&CmdOptions)
 	switch ctx.Command() {
@@ -49,11 +51,17 @@ func main() {
 		allowList = CmdOptions.Run.AllowList
 		blockList = CmdOptions.Run.BlockList
 		logger.ShowDebugLogs = CmdOptions.Run.Debug
+		if CmdOptions.Run.LogFile != nil {
+			logfile = *CmdOptions.Run.LogFile
+		}
 	case "attach":
 		attach = true
 		allowList = CmdOptions.Attach.AllowList
 		blockList = CmdOptions.Attach.BlockList
 		logger.ShowDebugLogs = CmdOptions.Attach.Debug
+		if CmdOptions.Attach.LogFile != nil {
+			logfile = *CmdOptions.Attach.LogFile
+		}
 	default:
 		panic("Command not implemented")
 	}
@@ -62,6 +70,18 @@ func main() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	} else {
 		slog.SetLogLoggerLevel(slog.LevelInfo)
+	}
+
+	// Mirror logs to logfile if setup
+	if logfile != "" {
+		logFileHandle, err := os.OpenFile(logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			slog.Error("Failed to open log file", logger.SlogError(err))
+			os.Exit(109)
+		}
+		defer logFileHandle.Close()
+		fileHandler := slog.NewJSONHandler(logFileHandle, nil)
+		slog.SetDefault(slog.New(fileHandler))
 	}
 
 	firewallList := make([]string, 0)
