@@ -47,12 +47,10 @@ func (c *CGroupWrapper) Run() (error, int) {
 	c.Cmd.Env = os.Environ()
 
 	if err := c.Cmd.Run(); err != nil {
-		return fmt.Errorf("failed to start command: %w", err), -1
-	}
-
-	exitCode := c.Cmd.ProcessState.ExitCode()
-	if exitCode != 0 {
-		return fmt.Errorf("command exited with code %d", exitCode), exitCode
+		exitCode := c.Cmd.ProcessState.ExitCode()
+		if exitCode != 0 {
+			return fmt.Errorf("command exited with code %d", exitCode), exitCode
+		}
 	}
 
 	return nil, 0

@@ -33,5 +33,10 @@ test: ## Run the tests
 lint:
 	golangci-lint run
 
+.PHONY: smoketest
+smoketest: build ## Run the smoke test
+	./script/smoke-test.sh
+
 .PHONY: ci
-ci: lint generate test build
+ci: lint generate test
+	./script/smoke-test.sh
