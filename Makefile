@@ -38,5 +38,4 @@ smoketest: build ## Run the smoke test
 	./script/smoke-test.sh
 
 .PHONY: ci
-ci: lint generate test
-	./script/smoke-test.sh
+ci: lint generate test smoketest ## Run CI (lint, generate, test, smoketest)
