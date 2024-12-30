@@ -41,7 +41,11 @@ func (c *CGroupWrapper) Run() (error, int) {
 	c.Cmd.Stdout = os.Stdout
 	c.Cmd.Stderr = os.Stderr
 
-	c.Cmd.Env = append([]string{}, syscall.Environ()...)
+	// Ensure command runs in the same directory as the current process
+	c.Cmd.Dir, _ = os.Getwd()
+	// Ensure envs like PATH are taken from current process
+	c.Cmd.Env = os.Environ()
+
 	if err := c.Cmd.Run(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err), -1
 	}
@@ -76,9 +80,6 @@ func (c *CGroupWrapper) attachCmdToCGroup() (func(), error) {
 		wrappedError := fmt.Errorf("failed to get file descriptor for cgroup: %w", err)
 		return cleanup, wrappedError
 	}
-
-	// Set the new process to have no ambient capabilities
-	c.Cmd.SysProcAttr.AmbientCaps = []uintptr{}
 
 	c.Cmd.SysProcAttr.UseCgroupFD = true
 	c.Cmd.SysProcAttr.CgroupFD = fd

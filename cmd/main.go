@@ -25,7 +25,7 @@ type FirewallArgs struct {
 
 type RunArgs struct {
 	FirewallArgs
-	Command string `arg:"" help:"The command to run" type:"path" name:"command"`
+	Command string `arg:"" help:"The command to run" name:"command"`
 }
 
 var CmdOptions struct {
@@ -90,7 +90,9 @@ func main() {
 			os.Exit(105)
 		}
 	} else {
-		cmd := exec.Command("/bin/bash", "-c", CmdOptions.Run.Command)
+		stringCmd := CmdOptions.Run.Command
+		splitCmd := strings.Split(stringCmd, " ")
+		cmd := exec.Command(splitCmd[0], splitCmd[1:]...)
 		wrapper, err = cgroup.NewCGroupWrapper(pathToCGroupToRunIn, cmd)
 		if err != nil {
 			fmt.Printf("Failed to create cgroup: %v\n", err)
