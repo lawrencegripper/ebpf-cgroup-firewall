@@ -54,6 +54,9 @@ func (d *DomainList) AddDomain(domain string) {
 }
 
 func (d *DomainList) String() string {
+	if d == nil || d.Domains == nil {
+		return "No Domains"
+	}
 	return strings.Join(d.Domains, ",")
 }
 
@@ -108,6 +111,9 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 }
 
 func (e *DnsFirewall) TrackIPToDomain(ip string, domain string) {
+	if e.ipDomainTracking == nil {
+		return
+	}
 	slog.Debug("Tracking IP to domain", "ip", ip, "domain", domain)
 	_, exists := e.ipDomainTracking[ip]
 	if !exists {

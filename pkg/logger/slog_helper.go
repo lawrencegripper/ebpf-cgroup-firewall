@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"fmt"
 	"log/slog"
 	"runtime"
 )
@@ -15,7 +14,7 @@ func SlogError(val error) slog.Attr {
 	if ShowDebugLogs {
 		return slog.Group("error",
 			slog.String("exception.message", val.Error()),
-			slog.String("exception.stacktrace", fmt.Sprintf("%s", stack[:n])),
+			slog.String("exception.stacktrace", string(stack[:n])),
 		)
 	} else {
 		return slog.Group("error",
