@@ -227,7 +227,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					if a, ok := answer.(*dns.A); ok {
 						err = b.dnsFirewall.AddIPToFirewall(
 							a.A.String(),
-							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("From DNS request: %s Matched: %s", a.A.String(), matchedBecause)},
+							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)},
 						)
 						if err != nil {
 							fmt.Printf("Failed to allow IP: %v\n", err)

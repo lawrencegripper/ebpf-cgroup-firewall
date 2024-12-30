@@ -31,6 +31,17 @@ type Reason struct {
 	Comment string
 }
 
+func (r *Reason) KindHumanReadable() string {
+	switch r.Kind {
+	case UserSpecified:
+		return "User Specified"
+	case FromDnsRequest:
+		return "From DNS Request"
+	default:
+		return "Unknown"
+	}
+}
+
 type DnsFirewall struct {
 	Spec                 *ebpf.CollectionSpec
 	Link                 *link.Link
@@ -219,9 +230,19 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 				}
 			}
 
+			reason := ebpfFirewall.AllowedIPsWithReason[intToIP(event.Ip).String()]
+
 			ip := intToIP(event.Ip)
 			if !event.Allowed {
-				fmt.Printf("Request to %s blocked, PID: %v CMD: '%s'.\n", ip, event.Pid, cmdRun)
+				if reason == nil {
+					fmt.Printf("Request to %s blocked, PID: %v CMD: '%s' REASON: 'Unknown'.\n",
+						ip, event.Pid, cmdRun,
+					)
+				} else {
+					fmt.Printf("Request to %s blocked, PID: %v CMD: '%s' WHY: '%s' REASON: '%v'.\n",
+						ip, event.Pid, cmdRun, reason.KindHumanReadable(), reason.Comment,
+					)
+				}
 				// Writing blocked events is nice to have, if we're locked then skip em
 				// rather than stack them up
 				ebpfFirewall.blockedEventsMutex.Lock()
