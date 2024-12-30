@@ -151,10 +151,11 @@ func main() {
 		<-c
 		fmt.Println("Sig int received, shutting down")
 	} else {
-		err := wrapper.Run()
+		err, exitCode := wrapper.Run()
 		if err != nil {
 			fmt.Printf("Failed to run command in cgroup: %v\n", err)
-			os.Exit(109)
+			// Exit with the same exit code as the command
+			os.Exit(exitCode)
 		}
 	}
 

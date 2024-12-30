@@ -31,10 +31,10 @@ func NewCGroupWrapper(path string, cmd *exec.Cmd) (*CGroupWrapper, error) {
 	}, nil
 }
 
-func (c *CGroupWrapper) Run() error {
+func (c *CGroupWrapper) Run() (error, int) {
 	cleanup, err := c.attachCmdToCGroup()
 	if err != nil {
-		return fmt.Errorf("failed to attach command to cgroup: %w", err)
+		return fmt.Errorf("failed to attach command to cgroup: %w", err), -1
 	}
 	defer cleanup()
 
@@ -43,10 +43,15 @@ func (c *CGroupWrapper) Run() error {
 
 	c.Cmd.Env = append([]string{}, syscall.Environ()...)
 	if err := c.Cmd.Run(); err != nil {
-		return fmt.Errorf("failed to start command: %w", err)
+		return fmt.Errorf("failed to start command: %w", err), -1
 	}
 
-	return nil
+	exitCode := c.Cmd.ProcessState.ExitCode()
+	if exitCode != 0 {
+		return fmt.Errorf("command exited with code %d", exitCode), exitCode
+	}
+
+	return nil, 0
 }
 
 // statCG returns a file descriptor for the cgroup, this is used when attaching a cmd to the cgroup
