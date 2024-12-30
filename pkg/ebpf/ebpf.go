@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 )
 
@@ -73,11 +75,12 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 // In the case where firewall is blocklist, ips added here are blocked, rest art allowed
 // In the case where firewall is allowlist, ips added here are allowed, rest are blocked
 func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
-	fmt.Println("Adding IP to firewall_ips_map: ", ip)
+	slog.Debug("Adding IP to firewall_ips_map", "ip", ip)
 	firewallIps := e.Objects.bpfMaps.FirewallIpMap
 
 	err := firewallIps.Put(ipToInt(ip), ipToInt(ip))
 	if err != nil {
+		slog.Error("adding IP to allowed_ips_map", "error", err)
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
 	}
 
@@ -87,7 +90,6 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 
 	e.AllowedIPsWithReason[ip] = reason
 
-	fmt.Println("firewall_ips_map: ", firewallIps.String())
 	return nil
 }
 
@@ -201,18 +203,18 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 			record, err := ringBufferEventsReader.Read()
 			if err != nil {
 				if errors.Is(err, ringbuf.ErrClosed) {
-					fmt.Println("Received signal, exiting..")
+					slog.Debug("Received signal, exiting..")
 
 					return
 				}
-				fmt.Printf("reading from reader: %s", err)
+				slog.Error("reading from ringbuf reader", logger.SlogError(err))
 
 				continue
 			}
 
 			// Parse the ringbuf event entry into a bpfEvent structure.
 			if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
-				fmt.Printf("parsing ringbuf event: %s", err)
+				slog.Error("parsing ringbuf event", logger.SlogError(err))
 
 				continue
 			}
@@ -235,13 +237,9 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 			ip := intToIP(event.Ip)
 			if !event.Allowed {
 				if reason == nil {
-					fmt.Printf("Request to %s blocked, PID: %v CMD: '%s' REASON: 'Unknown'.\n",
-						ip, event.Pid, cmdRun,
-					)
+					slog.Warn("Packet BLOCKED", "blocked", !event.Allowed, "ip", ip, "pid", event.Pid, "cmd", cmdRun, "reason", "Unknown")
 				} else {
-					fmt.Printf("Request to %s blocked, PID: %v CMD: '%s' WHY: '%s' REASON: '%v'.\n",
-						ip, event.Pid, cmdRun, reason.KindHumanReadable(), reason.Comment,
-					)
+					slog.Warn("Packet BLOCKED", "blocked", !event.Allowed, "ip", ip, "pid", event.Pid, "cmd", cmdRun, "why", reason.KindHumanReadable(), "reason", reason.Comment)
 				}
 				// Writing blocked events is nice to have, if we're locked then skip em
 				// rather than stack them up
@@ -251,11 +249,11 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 			}
 
 			if event.IsDns {
-				fmt.Printf("DNS Request from %s PID: %v.\n", cmdRun, event.Pid)
+				slog.Info("DNS Request", "cmd", cmdRun, "pid", event.Pid)
 			}
 		}
 	}()
 
-	fmt.Printf("Successfully attached eBPF programs to cgroup blocking network traffic\n")
+	slog.Debug("Successfully attached eBPF programs to cgroup blocking network traffic")
 	return ebpfFirewall, nil
 }

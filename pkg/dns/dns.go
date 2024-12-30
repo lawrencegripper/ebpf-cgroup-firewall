@@ -2,12 +2,14 @@ package dns
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/miekg/dns"
 )
@@ -23,30 +25,29 @@ type DNSProxy struct {
 // which blocks requests to the specified domains.
 func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.DnsFirewall, allowDNSRequestForBlocked bool) (*DNSProxy, error) {
 	// Start the DNS proxy
-	fmt.Printf("Starting DNS server on port %d\n", listenPort)
+	slog.Debug("Starting DNS server", "port", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
 	downstreamClient := new(dns.Client)
 	config, err := dns.ClientConfigFromFile("/etc/resolv.conf")
 	if err != nil {
-		fmt.Printf("Failed to load resolver configuration: %v\n", err)
+		slog.Error("Failed to load resolver configuration", logger.SlogError(err))
 		return nil, fmt.Errorf("failed to load resolver configuration: %w", err)
 	}
 	downstreamServerAddr := config.Servers[0] + ":" + config.Port
-	fmt.Printf("Using downstream DNS resolver: %s\n", downstreamServerAddr)
+	slog.Debug("Using downstream DNS resolver", "address", downstreamServerAddr)
 
 	serverHandler := &blockingDNSHandler{
 		firewallDomains:           domains,
 		downstreamClient:          downstreamClient,
 		dnsFirewall:               firewall,
 		DownstreamServerAddr:      downstreamServerAddr,
-		DNSLog:                    make(map[string]int),
 		allowDNSRequestForBlocked: allowDNSRequestForBlocked,
 	}
 	server := &dns.Server{Addr: fmt.Sprintf(":%d", listenPort), Net: "udp", Handler: serverHandler}
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
-			fmt.Printf("Failed to start DNS server: %v\n", err)
+			slog.Error("Failed to start DNS server", logger.SlogError(err))
 		}
 	}()
 
@@ -62,13 +63,13 @@ waitStartLoop:
 		case <-ticker:
 			conn, err := net.Dial("udp", fmt.Sprintf("127.0.0.1:%d", listenPort))
 			if err != nil {
-				fmt.Printf("DNS server not yet started: %v\n", err)
+				slog.Debug("DNS server not yet started", logger.SlogError(err))
 				continue
 			}
 
 			conn.Close() //nolint:gosec,errcheck,revive // we don't care about the error here
 
-			fmt.Printf("DNS server started on port %d\n", listenPort)
+			slog.Debug("DNS server started", "port", listenPort)
 			break waitStartLoop
 		}
 	}
@@ -92,10 +93,10 @@ func (d *DNSProxy) HasBlockedDomains() bool {
 // Shutdown gracefully shuts down the DNS server
 func (d *DNSProxy) Shutdown() error {
 	if err := d.Server.Shutdown(); err != nil {
-		fmt.Printf("Failed to shutdown DNS server: %v\n", err)
+		slog.Error("Failed to shutdown DNS server", logger.SlogError(err))
 		return fmt.Errorf("failed to shutdown DNS server: %w", err)
 	}
-	fmt.Println("DNS server shut down successfully")
+	slog.Debug("DNS server shut down successfully")
 	return nil
 }
 
@@ -141,8 +142,6 @@ type blockingDNSHandler struct {
 	firewallDomains           []string
 	BlockLog                  []dnsBlockResult
 	blockLogMu                sync.Mutex
-	DNSLog                    map[string]int
-	dnsLogMu                  sync.Mutex
 	dnsFirewall               *ebpf.DnsFirewall
 	downstreamClient          *dns.Client
 	DownstreamServerAddr      string
@@ -165,21 +164,10 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			m.Rcode = dns.RcodeRefused
 			err := w.WriteMsg(m)
 			if err != nil {
-				fmt.Printf("Failed to write DNS response: %v\n", err)
+				slog.Error("Failed to write DNS response", logger.SlogError(err))
 			}
 			return
 		}
-
-		// Track the DNS request
-		b.dnsLogMu.Lock()
-		if count, exists := b.DNSLog[q.Name]; exists {
-			fmt.Printf("Exiting: DNS request for %s, count: %d\n", q.Name, count)
-			b.DNSLog[q.Name] = count + 1
-		} else {
-			fmt.Printf("New: DNS request for %s, count: 1\n", q.Name)
-			b.DNSLog[q.Name] = 1
-		}
-		b.dnsLogMu.Unlock()
 
 		// Handle blocking
 		for _, domain := range b.firewallDomains {
@@ -193,7 +181,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.AllowList {
 				m.Rcode = dns.RcodeRefused
 				if err := w.WriteMsg(m); err != nil {
-					fmt.Printf("Failed to write DNS response: %v\n", err)
+					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
 				addToBlockLog(b, q, matchedBecause)
 				return
@@ -202,7 +190,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.BlockList {
 				m.Rcode = dns.RcodeRefused
 				if err := w.WriteMsg(m); err != nil {
-					fmt.Printf("Failed to write DNS response: %v\n", err)
+					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
 				addToBlockLog(b, q, matchedBecause)
 				return
@@ -211,7 +199,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)
 		if err != nil {
-			fmt.Printf("Failed to resolve from downstream: %v, domain: %s, downstream server: %s\n", err, q.Name, b.DownstreamServerAddr)
+			slog.Warn("Failed to resolve from downstream", logger.SlogError(err), "domain", q.Name, "downstream server", b.DownstreamServerAddr)
 			m.Rcode = dns.RcodeServerFailure
 			continue
 		}
@@ -230,7 +218,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 							&ebpf.Reason{Kind: ebpf.FromDnsRequest, Comment: fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)},
 						)
 						if err != nil {
-							fmt.Printf("Failed to allow IP: %v\n", err)
+							slog.Error("Failed to allow IP", logger.SlogError(err))
 						}
 					}
 				}
@@ -240,7 +228,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	err := w.WriteMsg(m)
 	if err != nil {
-		fmt.Printf("Failed to write DNS response: %v\n", err)
+		slog.Error("Failed to write DNS response", logger.SlogError(err))
 	}
 }
 

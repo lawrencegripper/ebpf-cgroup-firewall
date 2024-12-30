@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/cgroup"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/moby/sys/mountinfo"
 )
@@ -21,6 +23,7 @@ type FirewallArgs struct {
 	AllowList       []string `xor:"AllowList,BlockList" help:"IPs or Domains which are allowed"`
 	BlockList       []string `xor:"AllowList,BlockList" help:"IPs or Domains which are blocked"`
 	AllowDNSRequest bool     `help:"Allow DNS requests to blocked domains, drop packets to those IPs when used"`
+	Debug           bool     `help:"Print debugging logs"`
 }
 
 type RunArgs struct {
@@ -40,18 +43,25 @@ func main() {
 	var firewallMethod models.FirewallMethod
 
 	ctx := kong.Parse(&CmdOptions)
-	fmt.Println(ctx.Command())
 	switch ctx.Command() {
 	case "run <command>":
 		attach = false
 		allowList = CmdOptions.Run.AllowList
 		blockList = CmdOptions.Run.BlockList
+		logger.ShowDebugLogs = CmdOptions.Run.Debug
 	case "attach":
 		attach = true
 		allowList = CmdOptions.Attach.AllowList
 		blockList = CmdOptions.Attach.BlockList
+		logger.ShowDebugLogs = CmdOptions.Attach.Debug
 	default:
 		panic("Command not implemented")
+	}
+
+	if logger.ShowDebugLogs {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	} else {
+		slog.SetLogLoggerLevel(slog.LevelWarn)
 	}
 
 	firewallList := make([]string, 0)
@@ -66,8 +76,6 @@ func main() {
 	}
 
 	firewallIps, firewallDomains := splitDomainAndIPListByType(firewallList)
-
-	fmt.Println("Let's have a peak at what DNS requests are made by this process on port 53!")
 
 	// get a port for the DNS server
 	dnsPort, err := dns.FindUnusedPort()
@@ -86,7 +94,7 @@ func main() {
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
 			pathToCGroupToRunIn, dnsPort, ignoreCurrentPid, firewallMethod)
 		if err != nil {
-			fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
+			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
 		}
 	} else {
@@ -95,13 +103,13 @@ func main() {
 		cmd := exec.Command(splitCmd[0], splitCmd[1:]...)
 		wrapper, err = cgroup.NewCGroupWrapper(pathToCGroupToRunIn, cmd)
 		if err != nil {
-			fmt.Printf("Failed to create cgroup: %v\n", err)
+			slog.Error("Failed to create cgroup", logger.SlogError(err))
 			os.Exit(302)
 		}
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
 			wrapper.Path, dnsPort, 0, firewallMethod)
 		if err != nil {
-			fmt.Printf("Failed to attach eBPF program to cgroup: %v\n", err)
+			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
 		}
 	}
@@ -113,7 +121,7 @@ func main() {
 		CmdOptions.Attach.AllowDNSRequest || CmdOptions.Run.AllowDNSRequest,
 	)
 	if err != nil {
-		fmt.Printf("Failed to start DNS blocking proxy: %v\n", err)
+		slog.Error("Failed to start DNS blocking proxy", logger.SlogError(err))
 		os.Exit(101)
 	}
 
@@ -122,14 +130,14 @@ func main() {
 	if firewallMethod == models.AllowList {
 		err = ebpfFirewall.AddIPToFirewall("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
 		if err != nil {
-			fmt.Printf("Failed to allow IP: %v\n", err)
+			slog.Error("Failed to allow localhost", logger.SlogError(err))
 			os.Exit(108)
 		}
 
 		downstreamDnsIP := strings.Split(dns.BlockingDNSHandler.DownstreamServerAddr, ":")[0]
 		err = ebpfFirewall.AddIPToFirewall(downstreamDnsIP, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Downstream dns server"})
 		if err != nil {
-			fmt.Printf("Failed to allow IP: %v\n", err)
+			slog.Error("Failed to allow downstream dns server", logger.SlogError(err))
 			os.Exit(108)
 		}
 	}
@@ -137,13 +145,12 @@ func main() {
 	// Add explicitly allowed ips
 	for _, ip := range firewallIps {
 		if err := ebpfFirewall.AddIPToFirewall(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allowed by Allowlist"}); err != nil {
-			fmt.Printf("Failed to allow IP: %v\n", err)
+			slog.Error("Failed to allow IP", ip, logger.SlogError(err))
 			os.Exit(108)
 		}
 	}
 
-	// Now lets wait and see what DNS request happen
-	fmt.Println("DNS monitoring proxy started successfully")
+	slog.Debug("DNS monitoring proxy started successfully")
 
 	// If we're not attaching then we need to run the command in the cgroup
 	if attach {
@@ -151,31 +158,30 @@ func main() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt)
 		<-c
-		fmt.Println("Sig int received, shutting down")
+		slog.Info("Sig int received, shutting down")
 	} else {
 		err, exitCode := wrapper.Run()
 		if err != nil {
-			fmt.Printf("Failed to run command in cgroup: %v\n", err)
-			// Exit with the same exit code as the command
-			os.Exit(exitCode)
+			if exitCode == -1 {
+				slog.Error("Failed to run command in cgroup", logger.SlogError(err))
+			} else {
+				// Exit with the same exit code as the command
+				slog.Debug("Command exited with non-zero exit code", "exitcode", exitCode)
+				os.Exit(exitCode)
+			}
 		}
 	}
 
 	// Write DNS requests log to file
 	requestsFile, err := os.Create("/tmp/dnsrequests.log")
 	if err != nil {
-		fmt.Printf("Failed to create requests log file: %v\n", err)
+		slog.Error("Failed to create requests log file", logger.SlogError(err))
 		os.Exit(106)
 	}
 	defer requestsFile.Close()
-
-	for requestedDomain, logEntry := range dns.BlockingDNSHandler.DNSLog {
-		fmt.Fprintf(requestsFile, "Domain: %s\n%v\n\n", requestedDomain, logEntry)
-	}
-
 	blockedFile, err := os.Create("/tmp/dnsblocked.log")
 	if err != nil {
-		fmt.Printf("Failed to create blocked log file: %v\n", err)
+		slog.Error("Failed to create blocked log file", logger.SlogError(err))
 		os.Exit(107)
 	}
 	defer blockedFile.Close()
@@ -183,8 +189,6 @@ func main() {
 	for _, logEntry := range dns.BlockingDNSHandler.BlockLog {
 		fmt.Fprintf(blockedFile, "%v\n", logEntry)
 	}
-
-	fmt.Println("DNS logs written to /tmp/dnsrequests.log and /tmp/dnsblocked.log")
 }
 
 func splitDomainAndIPListByType(allowList []string) ([]string, []string) {
@@ -222,17 +226,17 @@ func GetCGroupForCurrentProcess() string {
 	cgroupProcFile := fmt.Sprintf("/proc/%d/cgroup", os.Getpid())
 	_, cgroupPathForCurrentProcess, err := cgroups.ParseCgroupFileUnified(cgroupProcFile)
 	if err != nil {
-		fmt.Printf("Failed to get cgroup path: %v\n", err)
+		slog.Error("Failed to get cgroup path", logger.SlogError(err))
 		os.Exit(102)
 	}
 
 	mounts, err := mountinfo.GetMounts(mountinfo.FSTypeFilter("cgroup2"))
 	if err != nil {
-		fmt.Printf("failed to get cgroup2 mounts: %s\n", err.Error())
+		slog.Error("Failed to get cgroup2 mounts", logger.SlogError(err))
 		os.Exit(103)
 	}
 	if len(mounts) == 0 {
-		fmt.Printf("no cgroup2 mounts found\n")
+		slog.Error("No cgroup2 mounts found")
 		os.Exit(104)
 	}
 	cgroup2Mount := mounts[0]

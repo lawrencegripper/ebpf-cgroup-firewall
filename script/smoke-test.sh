@@ -60,14 +60,14 @@ run_firewall_test() {
 
 open_fold "BlockList: Block google"
 
-    run_firewall_test "--block-list google.com" "curl --max-time 1 google.com"
+    run_firewall_test "--block-list google.com" "curl -s --max-time 1 google.com"
     assert_exit_code 6
     
 close_fold
 
 open_fold "BlockList: Block google. (Allow DNS)"
 
-    run_firewall_test "--block-list google.com --allow-dns-request" "curl --max-time 1 google.com"
+    run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --max-time 1 google.com"
     assert_exit_code 28
     assert_output_contains "blocked"
     assert_output_contains "Matched Domain Prefix: google.com"
@@ -76,28 +76,28 @@ close_fold
 
 open_fold "BlockList: Block google. Bing succeeds"
 
-    run_firewall_test "--block-list google.com" "curl --max-time 1 bing.com"
+    run_firewall_test "--block-list google.com" "curl -s --max-time 1 bing.com"
     assert_exit_code 0
 
 close_fold
 
 open_fold "AllowList: Allow google. Block everything else"
 
-    run_firewall_test "--allow-list google.com" "curl --max-time 1 google.com"
+    run_firewall_test "--allow-list google.com" "curl -s --max-time 1 google.com"
     assert_exit_code 0
 
 close_fold
 
 open_fold "AllowList: Block bing when only google allowed"
 
-    run_firewall_test "--allow-list google.com" "curl --max-time 1 bing.com"
+    run_firewall_test "--allow-list google.com" "curl -s --max-time 1 bing.com"
     assert_exit_code 6
 
 close_fold
 
 open_fold "AllowList: Block bing when only google allowed (allow dns resolution)"
 
-    run_firewall_test "--allow-list google.com --allow-dns-request" "curl --max-time 1 bing.com"
+    run_firewall_test "--allow-list google.com --allow-dns-request" "curl -s --max-time 1 bing.com"
     assert_exit_code 28
     assert_output_contains "blocked"
 
