@@ -68,6 +68,8 @@ type DnsFirewall struct {
 	FirewallIPsWithReason map[string]*Reason
 	RingBufferReader      *ringbuf.Reader
 	FirewallMethod        models.FirewallMethod
+	DnsTransactionIdToPid map[uint16]uint32
+	DnsTransactionIdToCmd map[uint16]string
 	blockedEvents         []bpfEvent
 	blockedEventsMutex    sync.Mutex
 	ipDomainTracking      map[string]*DomainList
@@ -213,14 +215,16 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 	}
 
 	ebpfFirewall := &DnsFirewall{
-		Spec:               spec,
-		Link:               &cgroupLink,
-		Objects:            &obj,
-		RingBufferReader:   ringBufferEventsReader,
-		FirewallMethod:     firewallMethod,
-		blockedEvents:      []bpfEvent{},
-		blockedEventsMutex: sync.Mutex{},
-		ipDomainTracking:   map[string]*DomainList{},
+		Spec:                  spec,
+		Link:                  &cgroupLink,
+		Objects:               &obj,
+		RingBufferReader:      ringBufferEventsReader,
+		FirewallMethod:        firewallMethod,
+		DnsTransactionIdToPid: map[uint16]uint32{},
+		DnsTransactionIdToCmd: map[uint16]string{},
+		blockedEvents:         []bpfEvent{},
+		blockedEventsMutex:    sync.Mutex{},
+		ipDomainTracking:      map[string]*DomainList{},
 	}
 
 	go ebpfFirewall.monitorRingBufferEventfunc()
@@ -289,6 +293,7 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 		if !event.Allowed {
 			slog.Warn(
 				"Packet BLOCKED",
+				"blockedAt", "packet",
 				"blocked", !event.Allowed,
 				"ip", ip,
 				"ipResolvedForDomains", e.ipDomainTracking[ip.String()].String(),
@@ -307,11 +312,10 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 		}
 
 		if event.IsDns {
-			slog.Error("DNS Request", "cmd", cmdRun, "pid", event.Pid, "transactionId", event.DnsTransactionId, "port", event.Port)
-		}
-
-		if event.DnsTransactionId != 0 {
-			slog.Error("Bob DNS Request", "cmd", cmdRun, "pid", event.Pid, "transactionId", event.DnsTransactionId, "port", event.Port)
+			if event.DnsTransactionId != 0 {
+				e.DnsTransactionIdToPid[event.DnsTransactionId] = event.Pid
+				e.DnsTransactionIdToCmd[event.DnsTransactionId] = cmdRun
+			}
 		}
 	}
 }

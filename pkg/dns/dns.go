@@ -154,8 +154,6 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Compress = false
 	m.Authoritative = true
 
-	slog.Error("DNS Transaction ID", "id", r.Id)
-
 	for _, q := range r.Question {
 		domainMatchedFirewallDomains := false
 		matchedBecause := ""
@@ -187,7 +185,16 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				}
 				addToBlockLog(b, q, matchedBecause)
 
-				slog.Warn("DNS BLOCKED", "reason", "NotInAllowList", "explaination", "Domain doesn't match any allowlist prefixes", "blocked", true, "domain", q.Name)
+				slog.Warn("DNS BLOCKED",
+					"reason", "NotInAllowList",
+					"explaination", "Domain doesn't match any allowlist prefixes",
+					"blocked", true,
+					"blockedAt", "dns",
+					"domain", q.Name,
+					"pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+					"cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
+					"firewallMethod", b.dnsFirewall.FirewallMethod.String(),
+				)
 				return
 			}
 
@@ -200,7 +207,16 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
 
-				slog.Warn("DNS BLOCKED", "reason", "FromDNSRequest", "explaination", explaination, "blocked", true, "domain", q.Name)
+				slog.Warn("DNS BLOCKED",
+					"reason", "FromDNSRequest",
+					"explaination", explaination,
+					"blocked", true,
+					"blockedAt", "dns",
+					"domain", q.Name,
+					"pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+					"cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
+					"firewallMethod", b.dnsFirewall.FirewallMethod.String(),
+				)
 				return
 			}
 		}

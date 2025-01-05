@@ -65,6 +65,11 @@ open_fold "BlockList: Block google"
 
     run_firewall_test "--block-list google.com" "curl -s --max-time 1 google.com"
     assert_exit_code 6
+    # 2025/01/05 21:16:27 WARN DNS BLOCKED reason=FromDNSRequest explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com. pid=258400 cmd="curl -s --max-time 1 google.com " firewallMethod=blocklist
+    assert_output_contains "curl -s --max-time 1 google.com"
+    assert_output_contains "DNS BLOCKED"
+    assert_output_contains "Matched Domain Prefix: google.com"
+    assert_output_contains "blockedAt=dns"
     
 close_fold
 
@@ -95,6 +100,10 @@ open_fold "AllowList: Block bing when only google allowed"
 
     run_firewall_test "--allow-list google.com" "curl -s --max-time 1 bing.com"
     assert_exit_code 6
+    assert_output_contains "curl -s --max-time 1 bing.com"
+    assert_output_contains "DNS BLOCKED"
+    assert_output_contains "Domain doesn't match any allowlist prefixes"
+    assert_output_contains "blockedAt=dns"
 
 close_fold
 
@@ -108,6 +117,8 @@ close_fold
 
 open_fold "LogFile: Test --log-file option"
 
+    rm -f /tmp/firewall_test.log # Clear log file if it exists
+    
     log_file="/tmp/firewall_test.log"
     run_firewall_test "--block-list google.com --log-file $log_file" "curl -s --max-time 1 google.com"
     assert_exit_code 6
