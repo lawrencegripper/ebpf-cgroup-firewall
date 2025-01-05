@@ -154,6 +154,8 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Compress = false
 	m.Authoritative = true
 
+	slog.Error("DNS Transaction ID", "id", r.Id)
+
 	for _, q := range r.Question {
 		domainMatchedFirewallDomains := false
 		matchedBecause := ""
@@ -211,7 +213,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 
-		// Used for logging where an IP came from
+		// Used for logging where an IP came from when blocking
 		for _, answer := range resp.Answer {
 			if a, ok := answer.(*dns.A); ok {
 				b.dnsFirewall.TrackIPToDomain(a.A.String(), q.Name)

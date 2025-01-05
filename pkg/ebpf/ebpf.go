@@ -263,6 +263,8 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 				cmdline := string(bytes.ReplaceAll(cmdlineBytes, []byte{0}, []byte{' '}))
 				pid2CmdLineCache[int(event.Pid)] = cmdline
 				cmdRun = cmdline
+			} else {
+				slog.Error("reading cmdline", logger.SlogError(err))
 			}
 		}
 
@@ -305,7 +307,11 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 		}
 
 		if event.IsDns {
-			slog.Debug("DNS Request", "cmd", cmdRun, "pid", event.Pid)
+			slog.Error("DNS Request", "cmd", cmdRun, "pid", event.Pid, "transactionId", event.DnsTransactionId, "port", event.Port)
+		}
+
+		if event.DnsTransactionId != 0 {
+			slog.Error("Bob DNS Request", "cmd", cmdRun, "pid", event.Pid, "transactionId", event.DnsTransactionId, "port", event.Port)
 		}
 	}
 }

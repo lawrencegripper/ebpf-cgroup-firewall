@@ -13,15 +13,17 @@ import (
 )
 
 type bpfEvent struct {
-	Pid         uint32
-	Port        uint16
-	Allowed     bool
-	_           [1]byte
-	Ip          uint32
-	OriginalIp  uint32
-	IsDns       bool
-	PidResolved bool
-	_           [2]byte
+	Pid              uint32
+	Port             uint16
+	Allowed          bool
+	_                [1]byte
+	Ip               uint32
+	OriginalIp       uint32
+	IsDns            bool
+	_                [1]byte
+	DnsTransactionId uint16
+	PidResolved      bool
+	_                [3]byte
 }
 
 type bpfSvcAddr struct {
