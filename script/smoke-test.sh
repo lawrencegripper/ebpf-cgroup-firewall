@@ -58,6 +58,35 @@ run_firewall_test() {
     echo "$cmdOutput" | pr -to10
 }
 
+attach_firewall_test() {
+    local args="$1"
+    local cmd="$2"
+
+    echo -e "\033[0;34m⬇️ Command:\033[0m"
+    echo "attach $args; then execute \"$cmd\" in current cgroup" | pr -to10
+
+    log_file="/tmp/firewall-${RANDOM}.json"
+    ./bin/ebpf-cgroup-firewall attach --log-file $log_file $args &
+    pid=$!
+
+    if ! ps -p $pid > /dev/null; then
+        echo "Firewall process failed to start" >&2
+        exit 1
+    fi
+
+    set +e
+    $cmd
+    exitCode=$?
+    set -e
+
+    kill $pid
+
+    cmdOutput=$(cat "$log_file")
+
+    echo -e "\033[0;34m⬇️ Command Output:\033[0m"
+    echo "$cmdOutput" | pr -to10
+}
+
 
 # Expect call to google to be blocked
 
@@ -118,7 +147,7 @@ close_fold
 open_fold "LogFile: Test --log-file option"
 
     rm -f /tmp/firewall_test.log # Clear log file if it exists
-    
+
     log_file="/tmp/firewall_test.log"
     run_firewall_test "--block-list google.com --log-file $log_file" "curl -s --max-time 1 google.com"
     assert_exit_code 6
@@ -127,5 +156,21 @@ open_fold "LogFile: Test --log-file option"
     cat "$log_file" | pr -to10
     cmdOutput=$(cat "$log_file")
     assert_output_contains "Matched Domain Prefix: google.com"
+
+close_fold
+
+open_fold "Attach: Curl google when blocked"
+
+    attach_firewall_test "--block-list google.com " "curl -s --max-time 1 google.com"
+    assert_exit_code 6
+    assert_output_contains "Matched Domain Prefix: google.com"
+
+close_fold
+
+
+open_fold "Attach: Curl google when bing blocked"
+
+    attach_firewall_test "--block-list bing.com " "curl -s --max-time 1 google.com"
+    assert_exit_code 0
 
 close_fold
