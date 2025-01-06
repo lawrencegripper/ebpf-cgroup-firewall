@@ -98,7 +98,7 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 			cgroupMan, cgroupPath := createTestCGroup(t)
 
 			redirectDNSToPort := 55555
-			firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0, tt.firewallMode)
+			firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, tt.firewallMode)
 			require.NoError(t, err)
 
 			// Start a http server to validate normal requests are not impacted
@@ -178,7 +178,7 @@ func TestAttachRedirectorToCGroup_IPv6(t *testing.T) {
 	cgroupMan, cgroupPath := createTestCGroup(t)
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 0, models.AllowList)
+	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, models.AllowList)
 	require.NoError(t, err)
 
 	// Start a http server on IPv6
