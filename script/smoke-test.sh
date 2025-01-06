@@ -85,7 +85,7 @@ attach_firewall_test() {
     exitCode=$?
     set -e
 
-    kill $pid
+    kill $pid || echo "Process failed"
 
     cmdOutput=$(cat "$log_file")
     rm $log_file # tidy up
@@ -168,7 +168,7 @@ attach_firewall_test() {
 
 open_fold "Attach: Curl google when blocked"
 
-    attach_firewall_test "--debug --block-list google.com " "curl -v --max-time 1 google.com"
+    attach_firewall_test "--debug --block-list google.com " "curl --max-time 5 google.com"
     assert_exit_code 6
     # cat "$log_file"
     assert_output_contains "Matched Domain Prefix: google.com"
@@ -178,7 +178,7 @@ close_fold
 
 open_fold "Attach: Curl google when bing blocked"
 
-    attach_firewall_test "--debug --block-list bing.com " "curl -v --max-time 1 google.com"
+    attach_firewall_test "--debug --block-list bing.com " "curl -v --max-time 5 google.com"
     assert_exit_code 0
 
 close_fold

@@ -48,6 +48,7 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.Dn
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
 			slog.Error("Failed to start DNS server", logger.SlogError(err))
+			panic(err)
 		}
 	}()
 
@@ -225,7 +226,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if err != nil {
 			slog.Warn("Failed to resolve from downstream", logger.SlogError(err), "domain", q.Name, "downstream server", b.DownstreamServerAddr)
 			m.Rcode = dns.RcodeServerFailure
-			continue
+			panic(err)
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 

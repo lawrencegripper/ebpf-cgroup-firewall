@@ -66,10 +66,10 @@ func main() {
 		panic("Command not implemented")
 	}
 
+	logLevel := slog.LevelInfo
 	if logger.ShowDebugLogs {
-		slog.SetLogLoggerLevel(slog.LevelDebug)
-	} else {
-		slog.SetLogLoggerLevel(slog.LevelInfo)
+		slog.Warn("Using debug logging")
+		logLevel = slog.LevelDebug
 	}
 
 	// Mirror logs to logfile if setup
@@ -80,8 +80,14 @@ func main() {
 			os.Exit(109)
 		}
 		defer logFileHandle.Close()
-		fileHandler := slog.NewJSONHandler(logFileHandle, nil)
-		slog.SetDefault(slog.New(fileHandler))
+		fileHandler := slog.NewJSONHandler(logFileHandle, &slog.HandlerOptions{
+			Level: logLevel,
+		})
+		handler := slog.New(fileHandler)
+
+		slog.SetDefault(handler)
+	} else {
+		slog.SetLogLoggerLevel(logLevel)
 	}
 
 	firewallList := make([]string, 0)

@@ -287,8 +287,6 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 			explaination = reason.Comment
 		}
 
-		slog.Debug("trackingDomains", "domains", e.ipDomainTracking)
-
 		ip := intToIP(event.Ip)
 		if !event.Allowed {
 			slog.Warn(
