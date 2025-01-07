@@ -1,6 +1,6 @@
 # eBPF CGroup Outbound Firewall
 
-Doesn't it suck that firewalls are IP based and you can't easily track which process made a blocked request? 
+Doesn't it suck that firewalls are IP based and you can't easily track which process made a request?
 
 This projects aims fix that.
 
@@ -9,7 +9,6 @@ It gives a simple, easy, **outbound firewall accepting DNS names or IPs for bloc
 Most firewalls inspect trafic at the whole machine, making it feel like a needle in a haystack when looking for a single programs activity.
 
 **This works on a process**, or group of process, **to give you control over what individual programs can reached out to** when you run.
-
 
 It does this by using:
 
@@ -47,7 +46,6 @@ to all processes that the user is running.
 Here we see `ebpf-cgroup-firewall attach` in one terminal and the `curl` in another terminal/process being blocked.
 
 ![Image](https://github.com/user-attachments/assets/d6806f53-cafd-49de-8f65-8dfef898a49a)
-
 
 ## How does it work?
 
