@@ -163,7 +163,11 @@ func main() {
 
 	// Add explicitly allowed ips
 	for _, ip := range firewallIps {
-		if err := ebpfFirewall.AddIPToFirewall(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allowed by Allowlist"}); err != nil {
+		comment := "Blocked IP as on explicit block list"
+		if firewallMethod == models.AllowList {
+			comment = "Allow IP as on explicit allow list"
+		}
+		if err := ebpfFirewall.AddIPToFirewall(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: comment}); err != nil {
 			slog.Error("Failed to allow IP", ip, logger.SlogError(err))
 			os.Exit(108)
 		}
