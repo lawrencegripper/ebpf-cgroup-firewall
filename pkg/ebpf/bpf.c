@@ -159,14 +159,15 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     /* Load packet header */
     bpf_skb_load_bytes(skb, 0, &iph, sizeof(struct iphdr));
     /* Use the socket cookie to lookup the calling PID */
-   __u64 socketCookie = bpf_get_socket_cookie(skb);
+    __u64 socketCookie = bpf_get_socket_cookie(skb);
     __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
-    
-    if (const_dns_proxy_pid == pid) 
+
+    /* Allow the dns proxy process outbound connection */
+    if (pid && const_dns_proxy_pid == *pid) 
     {
         return 1;
     }
-    
+
     /* 
     * Intercept UDP requests to the DNS Proxy to parse out the TransactionID
     * this allows us to correlate the DNS request to the PID that made it in the userspace DNS server.

@@ -138,7 +138,12 @@ func intToIP(val uint32) net.IP {
 //   - cGroupPath: The filesystem path to the cgroup where the eBPF program will be attached.
 //   - dnsProxyPort: The port number on localhost to which DNS requests should be forwarded.
 //   - exemptPID: The PID of the DNS proxy process that should be exempt from redirection to allow calling upstream dns server.
-func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int, firewallMethod models.FirewallMethod) (*DnsFirewall, error) {
+func AttachRedirectorToCGroup(
+	cGroupPath string,
+	dnsProxyPort int,
+	exemptPID int,
+	firewallMethod models.FirewallMethod,
+) (*DnsFirewall, error) {
 	// Remove resource limits for kernels <5.11.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("removing memlock: %w", err)
@@ -170,7 +175,7 @@ func AttachRedirectorToCGroup(cGroupPath string, dnsProxyPort int, exemptPID int
 
 	// Tell the eBPF program about the DNS proxy PID so it is allowed to send requests to upstream dns servers
 	// without having them redirected back to the proxy
-	if exemptPID == 0 {
+	if exemptPID != 0 {
 		err = spec.Variables["const_dns_proxy_pid"].Set(uint32(exemptPID))
 		if err != nil {
 			return nil, fmt.Errorf("setting const_dns_proxy_pid port variable failed: %w", err)

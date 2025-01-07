@@ -152,18 +152,11 @@ func main() {
 	}
 
 	// Allow calls to localhost and upstream dns server
-	// TODO: This is pretty permissive, probably this should be an option for uesrs to decide on
 	if firewallMethod == models.AllowList {
+		// TODO: This is pretty permissive, probably this should be an option for uesrs to decide on
 		err = ebpfFirewall.AddIPToFirewall("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
 		if err != nil {
 			slog.Error("Failed to allow localhost", logger.SlogError(err))
-			os.Exit(108)
-		}
-
-		downstreamDnsIP := strings.Split(dns.BlockingDNSHandler.DownstreamServerAddr, ":")[0]
-		err = ebpfFirewall.AddIPToFirewall(downstreamDnsIP, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Downstream dns server"})
-		if err != nil {
-			slog.Error("Failed to allow downstream dns server", logger.SlogError(err))
 			os.Exit(108)
 		}
 	}
