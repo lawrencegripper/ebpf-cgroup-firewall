@@ -16,7 +16,7 @@ It does this by using:
 - [socket cookies](https://docs.ebpf.io/linux/helper-function/bpf_get_socket_cookie/) and [DNS Transaction IDs](https://beta.computer-networking.info/syllabus/default/protocols/dns.html) to correlate which command made a request and tracks which IP's resolved from which domains
 - [cGroups](https://man7.org/linux/man-pages/man7/cgroups.7.html) to target a single process or group of linux processes
 
-For each dns or packet shows:
+For each dns or packet this means it has:
 - The command which initiated it and it's PID `ip=1.1.1.1 ipResolvedForDomains="No Domains"` vs `ip=142.250.187.206 ipResolvedForDomains=google.com`
 - The IP requested and which DNS request resolved to it `pid=56253 cmd="curl --max-time 1 1.1.1.1 || curl google.com "`
 - Why the decision was made ie. `explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com`
