@@ -155,6 +155,8 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Compress = false
 	m.Authoritative = true
 
+	// Somehow need to get at the udp private field on the w dns writer
+
 	for _, q := range r.Question {
 		domainMatchedFirewallDomains := false
 		matchedBecause := ""
