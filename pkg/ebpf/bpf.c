@@ -45,13 +45,14 @@ struct
     __uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
-/* Map the original destination for dns requests to map back on response */
+/* Map the original destination to socket cookie */
 struct
 {
-    __uint(type, BPF_MAP_TYPE_SK_STORAGE);
+    __uint(type, BPF_MAP_TYPE_HASH);
     __uint(map_flags, BPF_F_NO_PREALLOC);
-    __type(key, int);
+    __type(key, __u64);
     __type(value, struct svc_addr);
+    __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } service_mapping SEC(".maps");
 
 /* Map for allowed IP addresses from userspace. This is populated with the responses to dns queries */
@@ -103,31 +104,27 @@ int connect4(struct bpf_sock_addr *ctx)
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);
 
-    if (ctx->user_port == bpf_htons(80))
-    {
-        /* Store the original destination so we can map it back when a response is received */
-        orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, BPF_SK_STORAGE_GET_F_CREATE);
-        if (!orig)
-            return 0;
+    // if (ctx->user_port == bpf_htons(80))
+    // {
+    //     /* Store the original destination so we can map it back when a response is received */
+    //     orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, BPF_SK_STORAGE_GET_F_CREATE);
+    //     if (!orig)
+    //         return 0;
 
-        orig->addr = ctx->user_ip4;
-        orig->port = ctx->user_port;
+    //     orig->addr = ctx->user_ip4;
+    //     orig->port = ctx->user_port;
 
-        /* This is the hexadecimal representation of 127.0.0.1 address */
-        ctx->user_ip4 = bpf_htonl(0x7f000001);
-        ctx->user_port = bpf_htons(6775);
-    }
+    //     /* This is the hexadecimal representation of 127.0.0.1 address */
+    //     ctx->user_ip4 = bpf_htonl(0x7f000001);
+    //     ctx->user_port = bpf_htons(6775);
+    // }
+
+    bool didRedirect = false;
 
     /* For DNS Query (*:53) rewire service to backend 127.0.0.1:8853. */
     if (ctx->user_port == bpf_htons(53) && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)
     {
-        /* Store the original destination so we can map it back when a response is received */
-        orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, BPF_SK_STORAGE_GET_F_CREATE);
-        if (!orig)
-            return 0;
-
-        orig->addr = ctx->user_ip4;
-        orig->port = ctx->user_port;
+        didRedirect = true;
 
         /* This is the hexadecimal representation of 127.0.0.1 address */
         ctx->user_ip4 = bpf_htonl(0x7f000001);
@@ -145,6 +142,20 @@ int connect4(struct bpf_sock_addr *ctx)
 
         bpf_ringbuf_output(&events, &info, sizeof(info), 0);
     }
+
+    if (didRedirect)
+    {
+        /* Create storage for the original destination */
+        struct svc_addr orig_addr = {0};
+        orig = &orig_addr;
+
+        orig->addr = ctx->user_ip4;
+        orig->port = ctx->user_port;
+
+        /* Store the original destination of the request */
+        bpf_map_update_elem(&service_mapping, &socketCookie, orig, BPF_ANY);
+    }
+
     return 1;
 }
 
@@ -152,28 +163,6 @@ SEC("cgroup/getpeername4")
 int getpeername4(struct bpf_sock_addr *ctx)
 {
     struct svc_addr *orig;
-
-    /* Expose service *:53 as peer instead of backend. */
-    /* Use the mapping data captured in the connect4 function to map the response back to the original destination */
-    if (ctx->user_port == bpf_htons(const_dns_proxy_port))
-    {
-        orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, 0);
-        if (orig)
-        {
-            ctx->user_ip4 = orig->addr;
-            ctx->user_port = orig->port;
-        }
-    }
-
-    if (ctx->user_port == bpf_htons(6775))
-    {
-        orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, 0);
-        if (orig)
-        {
-            ctx->user_ip4 = orig->addr;
-            ctx->user_port = orig->port;
-        }
-    }
     return 1;
 }
 
