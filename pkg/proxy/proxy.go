@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"regexp"
 
 	"github.com/elazarl/goproxy"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
@@ -31,9 +30,40 @@ func Start(firewall *ebpf.DnsFirewall) {
 		log.Printf("Server starting up! - configured to listen on http interface %s and https interface", http_addr)
 	}
 
-	// proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*$"))).
-	// 	HandleConnect(goproxy.AlwaysMitm)
-	proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*$"))).
+	proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+		log.Printf("socket cookie: %v", 1)
+		return resp
+	})
+
+	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		log.Printf("resquest: %v", 1)
+
+		// w := ctx.Resp
+		// w.WriteHeader(http.StatusOK)
+		// w.Write([]byte("Request received"))
+
+		// hj, ok := w.(http.Hijacker)
+		// if !ok {
+		// 	http.Error(w, "webserver doesn't support hijacking", http.StatusInternalServerError)
+		// 	return
+		// }
+
+		// Need to do something like this
+		// now we hijack the connection to send WebSocket data
+		// if clientConn, err := proxy.hijackConnection(ctx, w); err == nil {
+		// 	wsConn, ok := resp.Body.(io.ReadWriter)
+		// 	if !ok {
+		// 		ctx.Warnf("Unable to use Websocket connection")
+		// 		return
+		// 	}
+		// 	proxy.proxyWebsocket(ctx, wsConn, clientConn)
+		// }
+
+		return req, nil
+	})
+
+	// proxy.OnRequest().HijackConnect()
+	proxy.OnRequest().
 		HijackConnect(func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
 			defer func() {
 				if e := recover(); e != nil {
