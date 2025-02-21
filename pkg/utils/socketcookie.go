@@ -2,15 +2,20 @@ package utils
 
 import (
 	"fmt"
-	"syscall"
+	"net"
 
 	"golang.org/x/sys/unix"
 )
 
 type SocketCookie uint64
 
-func GetSocketCookie(conn syscall.Conn) (SocketCookie, error) {
-	raw, err := conn.SyscallConn()
+func GetSocketCookie(conn net.Conn) (SocketCookie, error) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return 0, fmt.Errorf("conn is not a TCPConn")
+	}
+
+	raw, err := tcpConn.SyscallConn()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get syscall conn: %w", err)
 	}

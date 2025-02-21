@@ -16,6 +16,7 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/proxy"
 	"github.com/moby/sys/mountinfo"
 )
 
@@ -139,6 +140,8 @@ func main() {
 			os.Exit(105)
 		}
 	}
+
+	proxy.Start(ebpfFirewall)
 
 	dns, err := dns.StartDNSMonitoringProxy(
 		dnsPort,

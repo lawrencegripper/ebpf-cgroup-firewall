@@ -187,3 +187,10 @@ open_fold "Attach: Curl http://example.com when bing blocked"
     assert_exit_code 0
 
 close_fold
+
+open_fold "Attach: Curl http://bing.com when bing blocked"
+
+    attach_firewall_test "--debug --allow-dns-request --block-list bing.com " "curl --max-time 5 http://bing.com/"
+    assert_exit_code 28
+
+close_fold

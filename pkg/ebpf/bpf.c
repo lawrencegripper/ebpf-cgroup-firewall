@@ -104,20 +104,20 @@ int connect4(struct bpf_sock_addr *ctx)
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);
 
-    // if (ctx->user_port == bpf_htons(80))
-    // {
-    //     /* Store the original destination so we can map it back when a response is received */
-    //     orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, BPF_SK_STORAGE_GET_F_CREATE);
-    //     if (!orig)
-    //         return 0;
+    if (ctx->user_port == bpf_htons(80) && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)
+    {
+        // /* Store the original destination so we can map it back when a response is received */
+        // orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, BPF_SK_STORAGE_GET_F_CREATE);
+        // if (!orig)
+        //     return 0;
 
-    //     orig->addr = ctx->user_ip4;
-    //     orig->port = ctx->user_port;
+        // orig->addr = ctx->user_ip4;
+        // orig->port = ctx->user_port;
 
-    //     /* This is the hexadecimal representation of 127.0.0.1 address */
-    //     ctx->user_ip4 = bpf_htonl(0x7f000001);
-    //     ctx->user_port = bpf_htons(6775);
-    // }
+        /* This is the hexadecimal representation of 127.0.0.1 address */
+        ctx->user_ip4 = bpf_htonl(0x7f000001);
+        ctx->user_port = bpf_htons(6775);
+    }
 
     bool didRedirect = false;
 
@@ -176,11 +176,6 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     __u64 socketCookie = bpf_get_socket_cookie(skb);
     __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
 
-    /* Allow the dns proxy process outbound connection */
-    if (pid && const_dns_proxy_pid == *pid) 
-    {
-        return 1;
-    }
 
     /* 
     * Intercept UDP requests to the DNS Proxy to parse out the TransactionID
@@ -211,6 +206,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
             };
 
             bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+            
             return 1;
         }
     }
