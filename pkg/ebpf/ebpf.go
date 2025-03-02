@@ -20,6 +20,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
 
 type AllowKind int
@@ -82,6 +83,35 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 	blockedEventsCopy := make([]bpfEvent, len(e.blockedEvents))
 	copy(blockedEventsCopy, e.blockedEvents)
 	return blockedEventsCopy
+}
+
+func (e *DnsFirewall) HostAndPortFromSocketCookie(cookie utils.SocketCookie) (string, int, error) {
+	serviceMapping := e.Objects.bpfMaps.ServiceMapping
+	output := &map[string]string{}
+	fmt.Printf("cookie: %v", cookie)
+
+	iter := serviceMapping.Iterate()
+	key := uint64(16)
+	value := ""
+
+	fmt.Println("key size")
+	fmt.Println(serviceMapping.KeySize())
+
+	var x strings.Builder
+	for iter.Next(&key, &value) {
+		x.WriteString(fmt.Sprintf("key: %v, value: %v\n", key, value))
+		fmt.Errorf("key: %v, value: %v\n", key, value)
+	}
+	if err := iter.Err(); err != nil {
+		return x.String(), 0, fmt.Errorf("iterating service mapping: %w", err)
+	}
+
+	err := serviceMapping.Lookup(cookie, output)
+	if err != nil {
+		return x.String(), 0, fmt.Errorf("looking up service mapping: %w", err)
+	}
+
+	return x.String(), 0, errors.New("no output found")
 }
 
 // TODO

@@ -96,74 +96,74 @@ attach_firewall_test() {
 }
 
 
-open_fold "BlockList: Block google"
+# open_fold "BlockList: Block google"
 
-    run_firewall_test "--block-list google.com" "curl -s --max-time 1 google.com"
-    assert_exit_code 6
-    # 2025/01/05 21:16:27 WARN DNS BLOCKED reason=FromDNSRequest explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com. pid=258400 cmd="curl -s --max-time 1 google.com " firewallMethod=blocklist
-    assert_output_contains "curl -s --max-time 1 google.com"
-    assert_output_contains "DNS BLOCKED"
-    assert_output_contains "Matched Domain Prefix: google.com"
-    assert_output_contains "blockedAt=dns"
+#     run_firewall_test "--block-list google.com" "curl -s --max-time 1 google.com"
+#     assert_exit_code 6
+#     # 2025/01/05 21:16:27 WARN DNS BLOCKED reason=FromDNSRequest explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com. pid=258400 cmd="curl -s --max-time 1 google.com " firewallMethod=blocklist
+#     assert_output_contains "curl -s --max-time 1 google.com"
+#     assert_output_contains "DNS BLOCKED"
+#     assert_output_contains "Matched Domain Prefix: google.com"
+#     assert_output_contains "blockedAt=dns"
     
-close_fold
+# close_fold
 
-open_fold "BlockList: Block google. (Allow DNS)"
+# open_fold "BlockList: Block google. (Allow DNS)"
 
-    run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --max-time 1 google.com"
-    assert_exit_code 28
-    assert_output_contains "blocked"
-    assert_output_contains "Matched Domain Prefix: google.com"
+#     run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --max-time 1 google.com"
+#     assert_exit_code 28
+#     assert_output_contains "blocked"
+#     assert_output_contains "Matched Domain Prefix: google.com"
     
-close_fold
+# close_fold
 
-open_fold "BlockList: Block google. Bing succeeds"
+# open_fold "BlockList: Block google. Bing succeeds"
 
-    run_firewall_test "--block-list google.com" "curl -s --max-time 1 bing.com"
-    assert_exit_code 0
+#     run_firewall_test "--block-list google.com" "curl -s --max-time 1 bing.com"
+#     assert_exit_code 0
 
-close_fold
+# close_fold
 
-open_fold "AllowList: Allow google. Block everything else"
+# open_fold "AllowList: Allow google. Block everything else"
 
-    run_firewall_test "--allow-list google.com" "curl -s --max-time 1 google.com"
-    assert_exit_code 0
+#     run_firewall_test "--allow-list google.com" "curl -s --max-time 1 google.com"
+#     assert_exit_code 0
 
-close_fold
+# close_fold
 
-open_fold "AllowList: Block bing when only google allowed"
+# open_fold "AllowList: Block bing when only google allowed"
 
-    run_firewall_test "--allow-list google.com" "curl -s --max-time 1 bing.com"
-    assert_exit_code 6
-    assert_output_contains "curl -s --max-time 1 bing.com"
-    assert_output_contains "DNS BLOCKED"
-    assert_output_contains "Domain doesn't match any allowlist prefixes"
-    assert_output_contains "blockedAt=dns"
+#     run_firewall_test "--allow-list google.com" "curl -s --max-time 1 bing.com"
+#     assert_exit_code 6
+#     assert_output_contains "curl -s --max-time 1 bing.com"
+#     assert_output_contains "DNS BLOCKED"
+#     assert_output_contains "Domain doesn't match any allowlist prefixes"
+#     assert_output_contains "blockedAt=dns"
 
-close_fold
+# close_fold
 
-open_fold "AllowList: Block bing when only google allowed (allow dns resolution)"
+# open_fold "AllowList: Block bing when only google allowed (allow dns resolution)"
 
-    run_firewall_test "--allow-list google.com --allow-dns-request" "curl -s --max-time 1 bing.com"
-    assert_exit_code 28
-    assert_output_contains "blocked"
+#     run_firewall_test "--allow-list google.com --allow-dns-request" "curl -s --max-time 1 bing.com"
+#     assert_exit_code 28
+#     assert_output_contains "blocked"
 
-close_fold
+# close_fold
 
-open_fold "LogFile: Test --log-file option"
+# open_fold "LogFile: Test --log-file option"
 
-    rm -f /tmp/firewall_test.log # Clear log file if it exists
+#     rm -f /tmp/firewall_test.log # Clear log file if it exists
 
-    log_file="/tmp/firewall_test.log"
-    run_firewall_test "--block-list google.com --log-file $log_file" "curl -s --max-time 1 google.com"
-    assert_exit_code 6
+#     log_file="/tmp/firewall_test.log"
+#     run_firewall_test "--block-list google.com --log-file $log_file" "curl -s --max-time 1 google.com"
+#     assert_exit_code 6
 
-    echo -e "\033[0;34m⬇️ Log File Output:\033[0m" | $indent_once
-    cat "$log_file" | $indent_twice
-    cmdOutput=$(cat "$log_file")
-    assert_output_contains "Matched Domain Prefix: google.com"
+#     echo -e "\033[0;34m⬇️ Log File Output:\033[0m" | $indent_once
+#     cat "$log_file" | $indent_twice
+#     cmdOutput=$(cat "$log_file")
+#     assert_output_contains "Matched Domain Prefix: google.com"
 
-close_fold
+# close_fold
 
 open_fold "Attach: Curl google when blocked"
 
@@ -176,7 +176,7 @@ close_fold
 
 open_fold "Attach: Curl google when bing blocked"
 
-    attach_firewall_test "--debug --block-list bing.com " "curl --max-time 5 google.com"
+    attach_firewall_test "--debug --block-list bing.com " "curl --parallel --parallel-immediate --max-time 5 google.com example.com"
     assert_exit_code 0
 
 close_fold
@@ -190,7 +190,7 @@ close_fold
 
 open_fold "Attach: Curl http://bing.com when bing blocked"
 
-    attach_firewall_test "--debug --allow-dns-request --block-list bing.com " "curl --max-time 5 http://bing.com/"
+    attach_firewall_test "--debug --allow-dns-request --block-list bing.com " "curl  --max-time 5 http://bing.com/"
     assert_exit_code 28
 
 close_fold

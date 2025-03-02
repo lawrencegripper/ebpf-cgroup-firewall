@@ -104,8 +104,13 @@ int connect4(struct bpf_sock_addr *ctx)
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);
 
+    
+
+    bool didRedirect = false;
+
     if (ctx->user_port == bpf_htons(80) && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)
     {
+        didRedirect = true;
         // /* Store the original destination so we can map it back when a response is received */
         // orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, BPF_SK_STORAGE_GET_F_CREATE);
         // if (!orig)
@@ -118,8 +123,6 @@ int connect4(struct bpf_sock_addr *ctx)
         ctx->user_ip4 = bpf_htonl(0x7f000001);
         ctx->user_port = bpf_htons(6775);
     }
-
-    bool didRedirect = false;
 
     /* For DNS Query (*:53) rewire service to backend 127.0.0.1:8853. */
     if (ctx->user_port == bpf_htons(53) && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)

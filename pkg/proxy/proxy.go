@@ -43,11 +43,6 @@ func Start(firewall *ebpf.DnsFirewall) {
 		log.Printf("Server starting up! - configured to listen on http interface %s and https interface", http_addr)
 	}
 
-	proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-		log.Printf("socket cookie: %v", 1)
-		return resp
-	})
-
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		log.Printf("resquest: %v", 1)
 
@@ -57,27 +52,6 @@ func Start(firewall *ebpf.DnsFirewall) {
 			ctx.Logf("error getting socket cookie: %v", err)
 		}
 		log.Printf("socket cookie: %v", socketCookie)
-
-		// w := ctx.Resp
-		// w.WriteHeader(http.StatusOK)
-		// w.Write([]byte("Request received"))
-
-		// hj, ok := w.(http.Hijacker)
-		// if !ok {
-		// 	http.Error(w, "webserver doesn't support hijacking", http.StatusInternalServerError)
-		// 	return
-		// }
-
-		// Need to do something like this
-		// now we hijack the connection to send WebSocket data
-		// if clientConn, err := proxy.hijackConnection(ctx, w); err == nil {
-		// 	wsConn, ok := resp.Body.(io.ReadWriter)
-		// 	if !ok {
-		// 		ctx.Warnf("Unable to use Websocket connection")
-		// 		return
-		// 	}
-		// 	proxy.proxyWebsocket(ctx, wsConn, clientConn)
-		// }
 
 		return req, nil
 	})
@@ -135,8 +109,24 @@ func Start(firewall *ebpf.DnsFirewall) {
 			fmt.Fprintln(w, "Cannot handle requests without Host header, e.g., HTTP 1.0")
 			return
 		}
-		req.URL.Scheme = "http"
-		req.URL.Host = req.Host
+		// Pull the request destination from the eBFP socket cookie and ebfp hash
+		// log.Printf("nonproxy request: %v", req.URL.String())
+		// log.Printf("nonproxy request: %v", req.Host)
+		// req.URL.Scheme = "http"
+		// req.URL.Host = req.Host
+
+		conn := GetConn(req)
+		socketCookie, err := utils.GetSocketCookie(conn)
+		if err != nil {
+			log.Printf("error getting socket cookie: %v", err)
+		}
+		log.Printf("socket cookie: %v", socketCookie)
+		host, port, err := firewall.HostAndPortFromSocketCookie(socketCookie)
+		if err != nil {
+			log.Printf("error getting host and port from socket cookie: %v", err)
+		}
+		log.Printf("host: %v, port: %v", host, port)
+		panic(1)
 		proxy.ServeHTTP(w, req)
 	})
 
