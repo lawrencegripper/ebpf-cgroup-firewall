@@ -41,7 +41,8 @@
         "yzhang.markdown-all-in-one",
         "golang.go",
         "ms-azuretools.vscode-docker",
-        "ms-vscode.cpptools"
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack"
       ]
     }
   },

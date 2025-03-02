@@ -20,6 +20,19 @@ func orPanic(err error) {
 	}
 }
 
+type contextKey struct {
+	key string
+}
+
+var ConnContextKey = &contextKey{"http-conn"}
+
+func SaveConnInContext(ctx context.Context, c net.Conn) context.Context {
+	return context.WithValue(ctx, ConnContextKey, c)
+}
+func GetConn(r *http.Request) net.Conn {
+	return r.Context().Value(ConnContextKey).(net.Conn)
+}
+
 func Start(firewall *ebpf.DnsFirewall) {
 	http_addr := ":6775"
 	// https_addr := flag.String("httpsaddr", ":3128", "proxy https listen address")
@@ -37,6 +50,13 @@ func Start(firewall *ebpf.DnsFirewall) {
 
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		log.Printf("resquest: %v", 1)
+
+		conn := GetConn(req)
+		socketCookie, err := utils.GetSocketCookie(conn)
+		if err != nil {
+			ctx.Logf("error getting socket cookie: %v", err)
+		}
+		log.Printf("socket cookie: %v", socketCookie)
 
 		// w := ctx.Resp
 		// w.WriteHeader(http.StatusOK)
@@ -121,7 +141,13 @@ func Start(firewall *ebpf.DnsFirewall) {
 	})
 
 	go func() {
-		log.Fatalln(http.ListenAndServe(http_addr, proxy))
+		server := http.Server{
+			Addr:        http_addr,
+			ConnContext: SaveConnInContext,
+			Handler:     proxy,
+		}
+
+		log.Fatalln(server.ListenAndServe())
 	}()
 
 	// // listen to the TLS ClientHello but make it a CONNECT request instead
