@@ -19,6 +19,7 @@ import (
 	"github.com/inconshreveable/go-vhost"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
@@ -68,7 +69,7 @@ type Logger struct{}
 
 func (l *Logger) Printf(format string, v ...interface{}) {
 	output := fmt.Sprintf(format, v...)
-	slog.Info(output)
+	slog.Debug(output)
 }
 
 func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) {
@@ -76,16 +77,17 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 	https_addr := ":6776"
 
 	proxy := goproxy.NewProxyHttpServer()
-	proxy.Verbose = true
+	proxy.Verbose = logger.ShowDebugLogs
 	if proxy.Verbose {
-		log.Printf("Server starting up! - configured to listen on http interface %s and https interface %s", http_addr, https_addr)
+		slog.Debug("Server starting up! - configured to listen on http interface %s and https interface %s", http_addr, https_addr)
 	}
 
 	proxy.Logger = &Logger{}
 
 	cert, err := loadMkcertRootCA()
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("Error loading mkcert root CA", logger.SlogError(err))
+		panic(err)
 	}
 
 	customCaMitm := &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: goproxy.TLSConfigFromCA(cert)}
@@ -98,17 +100,42 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 
 	// Blocking logic in the proxy
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		slog.Info("HTTP proxy handling request", slog.String("host", req.Host), slog.String("url", req.URL.String()), slog.String("method", req.Method))
+
 		// First handle domain level blocking
 		for _, domain := range firewallDomains {
 			if firewall.FirewallMethod == models.AllowList {
 				// WARNING: Suffix match here is key to avoid github.com.lawrence.com matching for github.com
 				if !strings.HasSuffix(req.Host, domain) {
-					log.Printf("http proxy blocked domain not on allow list: %v", domain)
+					slog.Warn("HTTP BLOCKED",
+						"reason", "NotInAllowList",
+						"explaination", "Domain doesn't match any allowlist prefixes",
+						"blocked", true,
+						"blockedAt", "http",
+						"domain", domain,
+						// TODO: Pid tracking in http proxy
+						// "pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
+						"firewallMethod", firewall.FirewallMethod.String(),
+					)
 					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 				}
 			} else if firewall.FirewallMethod == models.BlockList {
 				if strings.HasSuffix(req.Host, domain) {
-					log.Printf("http proxy blocked domain: %v", domain)
+					explaination := fmt.Sprintf("Matched Domain Prefix: %s", domain)
+
+					// TODO: Add helper method to standardise logging on blocking with DNS proxy
+					slog.Warn("HTTP BLOCKED",
+						"reason", "InBlockList",
+						"explaination", explaination,
+						"blocked", true,
+						"blockedAt", "http",
+						"domain", domain,
+						// TODO: Pid tracking in http proxy
+						// "pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
+						"firewallMethod", firewall.FirewallMethod.String(),
+					)
 					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 				}
 			}
@@ -119,12 +146,32 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			reqUrl := req.URL.String()
 			if firewall.FirewallMethod == models.AllowList {
 				if !strings.HasPrefix(reqUrl, firewallUrl) {
-					log.Printf("http proxy blocked url not on allow list: %v", firewallUrl)
+					slog.Warn("HTTP BLOCKED",
+						"reason", "NotInAllowList",
+						"explaination", "Url doesn't match any allowlist prefixes",
+						"blocked", true,
+						"blockedAt", "http",
+						"url", firewallUrl,
+						// TODO: Pid tracking in http proxy
+						// "pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
+						"firewallMethod", firewall.FirewallMethod.String(),
+					)
 					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 				}
 			} else if firewall.FirewallMethod == models.BlockList {
 				if strings.HasPrefix(reqUrl, firewallUrl) {
-					log.Printf("http proxy blocked url: %v", firewallUrl)
+					slog.Warn("HTTP BLOCKED",
+						"reason", "InBlockList",
+						"explaination", fmt.Sprintf("Matched URL Prefix: %s", firewallUrl),
+						"blocked", true,
+						"blockedAt", "http",
+						"url", firewallUrl,
+						// TODO: Pid tracking in http proxy
+						// "pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
+						"firewallMethod", firewall.FirewallMethod.String(),
+					)
 					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 				}
 			}
@@ -141,17 +188,13 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 		}
 
 		conn := GetConn(req)
-
 		_, port := getOriginalIpAndPortFromConn(conn, firewall)
 
 		originalHost := req.Host
-		slog.Info("original host", slog.String("host", originalHost))
-		log.Printf("full url: %v", req.URL.String())
-		log.Printf("request method: %v", req.Method)
+		slog.Debug("original host and port", slog.String("host", originalHost), slog.Int("port", port))
 
 		req.URL.Scheme = "http"
 		req.URL.Host = fmt.Sprintf("%s:%d", originalHost, port)
-		log.Printf("new host: %v", req.URL.Host)
 
 		proxy.ServeHTTP(w, req)
 	})
@@ -172,12 +215,13 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 	go func() {
 		ln, err := net.Listen("tcp", https_addr)
 		if err != nil {
-			log.Fatalf("Error listening for https connections - %v", err)
+			slog.Error("Error listening for https connections", logger.SlogError(err))
+			panic(err)
 		}
 		for {
 			c, err := ln.Accept()
 			if err != nil {
-				log.Printf("Error accepting new connection - %v", err)
+				slog.Error("Error accepting new connection", logger.SlogError(err))
 				continue
 			}
 			go func(c net.Conn) {
@@ -187,10 +231,10 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 
 				log.Printf("tlsConn: %v", tlsConn)
 				if err != nil {
-					log.Printf("Error accepting new connection - %v", err)
+					slog.Error("Error accepting new connection", logger.SlogError(err), slog.String("remoteAddr", c.RemoteAddr().String()))
 				}
 				if tlsConn.Host() == "" {
-					log.Printf("Cannot support non-SNI enabled clients")
+					slog.Error("Cannot support non-SNI enabled clients", slog.String("remoteAddr", c.RemoteAddr().String()))
 					return
 				}
 
@@ -215,12 +259,11 @@ func getOriginalIpAndPortFromConn(conn net.Conn, firewall *ebpf.DnsFirewall) (ne
 	localAddr := conn.RemoteAddr().(*net.TCPAddr)
 	sourcePort := localAddr.Port
 
-	slog.Default().Warn("sourcePort", slog.Int("sourcePort", sourcePort))
-
 	ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
 	if err != nil {
 		log.Printf("error getting host and port from source port: %v", err)
 	}
+	slog.Debug("eBPF lookup using source port", slog.Int("sourcePort", sourcePort), slog.String("originalIP", ip.String()), slog.Int("originalPort", port))
 	return ip, port
 }
 

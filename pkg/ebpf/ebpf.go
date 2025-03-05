@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"net"
 	"os"
@@ -87,54 +86,33 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 
 func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, error) {
 	maps := e.Objects.bpfMaps
-	// serverSocketCookie :=
-	// output := &map[string]string{}
-	// slog.Warn("server cookie", "serverSocketCookie", serverSocketCookie)
 
-	// slog.Warn("firewallIps")
-	// ip := uint32(16)
-	// iterateOvereBPFMap(maps.FirewallIpMap.Iterate(), ip)
-
-	slog.Warn("srcPortToSockClient")
-
-	iterateOvereBPFMap(maps.SrcPortToSockClient.Iterate())
-
+	// Use the source port map to get the client socket cookie
 	clientSocketCookie := uint64(16)
 	err := maps.SrcPortToSockClient.Lookup(uint16(sourcePort), &clientSocketCookie)
 	if err != nil {
-		slog.Warn("srcPortToSockClient", "error", err)
+		slog.Error("failed to lookup srcPortToSockClient map value", logger.SlogError(err), "sourcePort", sourcePort)
+		return nil, 0, err
 	}
-
-	slog.Warn("clientSocketCookie", "clientSocketCookie", clientSocketCookie)
 
 	originalIPBitwise := uint32(16)
 	err = maps.SockClientToOriginalIp.Lookup(clientSocketCookie, &originalIPBitwise)
 	if err != nil {
-		slog.Warn("sockClientToOriginalIp", "error", err)
+		slog.Error("failed to lookup sockClientToOriginalIp map value", logger.SlogError(err), "clientSocketCookie", clientSocketCookie)
+		return nil, 0, err
 	}
 
 	originalIp := models.IntToIP(originalIPBitwise)
-	slog.Warn("originalIPBitwise", "originalIPBitwise", originalIp)
-
 	originalPort := uint16(16)
 	err = maps.SockClientToOriginalPort.Lookup(clientSocketCookie, &originalPort)
 	if err != nil {
-		slog.Warn("sockClientToOriginalPort", "error", err)
+		slog.Error("failed to lookup sockClientToOriginalPort map value", logger.SlogError(err), "clientSocketCookie", clientSocketCookie)
+		return nil, 0, err
 	}
+
+	slog.Debug("eBPF matched source port to retreive original ip and port", "sourcePort", sourcePort, "originalIP", originalIp, "originalPort", originalPort)
 
 	return originalIp, int(originalPort), nil
-}
-
-func iterateOvereBPFMap(iter *ebpf.MapIterator) {
-	key := uint16(16)
-	value := uint64(16)
-
-	for iter.Next(&key, &value) {
-		slog.Warn(fmt.Sprintf("key: %v, value: %d \n", key, value))
-	}
-	if err := iter.Err(); err != nil {
-		slog.Error("iterating over eBPF map", logger.SlogError(err))
-	}
 }
 
 // TODO
@@ -253,7 +231,7 @@ func AttachRedirectorToCGroup(
 		Program: obj.Connect4,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attaching eBPF program to cgroup: %w", err)
+		return nil, fmt.Errorf("attaching eBPF program Connect4 to cgroup: %w", err)
 	}
 
 	// TODO store link and use it to pin
@@ -263,7 +241,7 @@ func AttachRedirectorToCGroup(
 		Program: obj.CgroupSkbEgress,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attaching eBPF program to cgroup: %w", err)
+		return nil, fmt.Errorf("attaching eBPF program CgroupSkbEgress to cgroup: %w", err)
 	}
 
 	// TODO store link and use it to pin
@@ -273,7 +251,7 @@ func AttachRedirectorToCGroup(
 		Program: obj.CgSockOps,
 	})
 	if err != nil {
-		log.Print("Attaching CgSockOpt program to Cgroup:", err)
+		return nil, fmt.Errorf("attaching eBPF program CgSockOps to cgroup: %w", err)
 	}
 
 	// Open a ringbuf reader from userspace RINGBUF map described in the

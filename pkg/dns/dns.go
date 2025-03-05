@@ -211,7 +211,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
 
 				slog.Warn("DNS BLOCKED",
-					"reason", "FromDNSRequest",
+					"reason", "InBlockList",
 					"explaination", explaination,
 					"blocked", true,
 					"blockedAt", "dns",

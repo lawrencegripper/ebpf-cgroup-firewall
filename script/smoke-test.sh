@@ -120,7 +120,7 @@ open_fold "AllowList: allow github.com/lawrencegripper but call github.com/githu
     run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl $default_curl_args https://github.com/github"
     assert_exit_code 22
     assert_output_contains "blocked"
-    assert_output_contains "http proxy blocked url not on allow list: https://github.com/lawrencegripper"
+    assert_output_contains "HTTP BLOCKED reason=NotInAllowList explaination=\"Url doesn't match any allowlist prefixes\" blocked=true"
     
 close_fold
 
@@ -129,7 +129,7 @@ open_fold "BlockList: Block https google. (Allow DNS)"
     run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 https://google.com"
     assert_exit_code 22
     assert_output_contains "blocked"
-    assert_output_contains "http proxy blocked domain: google.com"
+    assert_output_contains 'HTTP BLOCKED reason=InBlockList explaination="Matched Domain Prefix: google.com'
     
 close_fold
 
@@ -151,8 +151,8 @@ open_fold "BlockList: Block google. (Allow DNS)"
     run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 google.com"
     assert_exit_code 22
     assert_output_contains "blocked"
-    assert_output_contains "http proxy blocked domain: google.com"
-    # TODO: Currently when using the `run` the http proxy is outside the cgroup so doesn't intercept DNS requests
+    assert_output_contains 'HTTP BLOCKED reason=InBlockList explaination="Matched Domain Prefix: google.com"'
+    # TODO: Currently when using the `run` the HTTP proxy is outside the cgroup so doesn't intercept DNS requests
     # or there is some other thing broken here 
     # assert_output_contains "Matched Domain Prefix: google.com"
     
