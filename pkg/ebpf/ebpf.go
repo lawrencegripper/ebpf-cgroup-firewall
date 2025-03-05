@@ -84,6 +84,24 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 	return blockedEventsCopy
 }
 
+func (e *DnsFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
+	clientSocketCookie := uint64(16)
+	err := e.Objects.bpfMaps.SrcPortToSockClient.Lookup(uint16(sourcePort), &clientSocketCookie)
+	if err != nil {
+		slog.Error("failed to lookup srcPortToSockClient map value", logger.SlogError(err), "sourcePort", sourcePort)
+		return 0, err
+	}
+
+	pid := uint32(16)
+	err = e.Objects.bpfMaps.SocketPidMap.Lookup(clientSocketCookie, &pid)
+	if err != nil {
+		slog.Error("failed to lookup socketPidMap value", logger.SlogError(err), "socketCookie", clientSocketCookie)
+		return 0, err
+	}
+
+	return pid, nil
+}
+
 func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, error) {
 	maps := e.Objects.bpfMaps
 

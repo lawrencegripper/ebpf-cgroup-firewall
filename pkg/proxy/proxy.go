@@ -33,9 +33,11 @@ type contextKey struct {
 var ConnContextKey = &contextKey{"http-conn"}
 
 func SaveConnInContext(ctx context.Context, c net.Conn) context.Context {
+	slog.Debug("SaveConnInContext", slog.String("key", ConnContextKey.key), slog.Any("conn", c), slog.Any("ctx", ctx))
 	return context.WithValue(ctx, ConnContextKey, c)
 }
-func GetConn(r *http.Request) net.Conn {
+func GetConnFromContext(r *http.Request) net.Conn {
+	slog.Debug("GetConn", slog.String("key", ConnContextKey.key), slog.Any("conn", r.Context().Value(ConnContextKey)), slog.Any("ctx", r.Context()))
 	return r.Context().Value(ConnContextKey).(net.Conn)
 }
 
@@ -114,7 +116,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 						"blockedAt", "http",
 						"domain", domain,
 						// TODO: Pid tracking in http proxy
-						// "pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+						"pid", getPidFromConn(GetConnFromContext(ctx.Req), firewall),
 						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
 						"firewallMethod", firewall.FirewallMethod.String(),
 					)
@@ -132,7 +134,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 						"blockedAt", "http",
 						"domain", domain,
 						// TODO: Pid tracking in http proxy
-						// "pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+						// "pid", getPidFromConn(GetConnFromContext(ctx.Req), firewall),
 						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
 						"firewallMethod", firewall.FirewallMethod.String(),
 					)
@@ -153,7 +155,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 						"blockedAt", "http",
 						"url", firewallUrl,
 						// TODO: Pid tracking in http proxy
-						// "pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+						// "pid", getPidFromConn(GetConnFromContext(ctx.Req), firewall),
 						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
 						"firewallMethod", firewall.FirewallMethod.String(),
 					)
@@ -168,7 +170,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 						"blockedAt", "http",
 						"url", firewallUrl,
 						// TODO: Pid tracking in http proxy
-						// "pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
+						"pid", getPidFromConn(GetConnFromContext(ctx.Req), firewall),
 						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
 						"firewallMethod", firewall.FirewallMethod.String(),
 					)
@@ -187,7 +189,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			return
 		}
 
-		conn := GetConn(req)
+		conn := GetConnFromContext(req)
 		_, port := getOriginalIpAndPortFromConn(conn, firewall)
 
 		originalHost := req.Host
@@ -248,6 +250,8 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 					Header:     make(http.Header),
 					RemoteAddr: c.RemoteAddr().String(),
 				}
+				ctx := context.Background()
+				connectReq = connectReq.WithContext(SaveConnInContext(ctx, tlsConn.Conn))
 				resp := dumbResponseWriter{tlsConn}
 				proxy.ServeHTTP(resp, connectReq)
 			}(c)
@@ -255,16 +259,31 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 	}()
 }
 
+func getPidFromConn(conn net.Conn, firewall *ebpf.DnsFirewall) int {
+	sourcePort := sourcePortFromConn(conn)
+	pid, err := firewall.PidFromSrcPort(sourcePort)
+	if err != nil {
+		slog.Error("error getting pid from source port", slog.Int("sourcePort", sourcePort), logger.SlogError(err))
+		return -1
+	}
+	return int(pid)
+}
+
 func getOriginalIpAndPortFromConn(conn net.Conn, firewall *ebpf.DnsFirewall) (net.IP, int) {
-	localAddr := conn.RemoteAddr().(*net.TCPAddr)
-	sourcePort := localAddr.Port
+	sourcePort := sourcePortFromConn(conn)
 
 	ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
 	if err != nil {
-		log.Printf("error getting host and port from source port: %v", err)
+		slog.Error("error getting host and port from source port", slog.Int("sourcePort", sourcePort), logger.SlogError(err))
 	}
 	slog.Debug("eBPF lookup using source port", slog.Int("sourcePort", sourcePort), slog.String("originalIP", ip.String()), slog.Int("originalPort", port))
 	return ip, port
+}
+
+func sourcePortFromConn(conn net.Conn) int {
+	localAddr := conn.RemoteAddr().(*net.TCPAddr)
+	sourcePort := localAddr.Port
+	return sourcePort
 }
 
 type dumbResponseWriter struct {
