@@ -95,10 +95,17 @@ attach_firewall_test() {
     echo "$cmdOutput" | $indent_twice
 }
 
+open_fold "AllowList: Allows https google"
+
+    run_firewall_test "--allow-list google.com" "curl -s --max-time 1 https://google.com"
+    assert_exit_code 0 # http mitm proxy will close the connection
+    
+close_fold
+
 open_fold "BlockList: Block https google. (Allow DNS)"
 
-    run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --max-time 1 https://google.com"
-    assert_exit_code 52 # http mitm proxy will close the connection
+    run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 https://google.com"
+    assert_exit_code 22 # http mitm proxy will close the connection
     assert_output_contains "blocked"
     assert_output_contains "http proxy blocked domain: google.com"
     # TODO: Currently when using the `run` the http proxy is outside the cgroup so doesn't intercept DNS requests
@@ -122,8 +129,8 @@ close_fold
 
 open_fold "BlockList: Block google. (Allow DNS)"
 
-    run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --max-time 1 google.com"
-    assert_exit_code 52 # http mitm proxy will close the connection
+    run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 google.com"
+    assert_exit_code 22 # http mitm proxy will close the connection
     assert_output_contains "blocked"
     assert_output_contains "http proxy blocked domain: google.com"
     # TODO: Currently when using the `run` the http proxy is outside the cgroup so doesn't intercept DNS requests
@@ -134,8 +141,8 @@ close_fold
 
 open_fold "AllowList: curl raw IP without dns request blocked"
 
-    run_firewall_test "--debug --allow-list bing.com " "curl  --max-time 1 http://1.1.1.1"
-    assert_exit_code 52
+    run_firewall_test "--debug --allow-list bing.com " "curl --fail-with-body --max-time 1 http://1.1.1.1"
+    assert_exit_code 22
 
 close_fold
 
@@ -166,8 +173,8 @@ close_fold
 
 open_fold "AllowList: Block bing when only google allowed (allow dns resolution)"
 
-    run_firewall_test "--allow-list google.com --allow-dns-request" "curl -s --max-time 1 bing.com"
-    assert_exit_code 52
+    run_firewall_test "--allow-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 bing.com"
+    assert_exit_code 22
     assert_output_contains "blocked"
 
 close_fold
@@ -212,14 +219,14 @@ close_fold
 
 open_fold "Attach: Curl http://bing.com when bing blocked"
 
-    attach_firewall_test "--debug --allow-dns-request --block-list bing.com " "curl  --max-time 5 http://bing.com/"
-    assert_exit_code 52
+    attach_firewall_test "--debug --allow-dns-request --block-list bing.com " "curl --fail-with-body --max-time 5 http://bing.com/"
+    assert_exit_code 22
 
 close_fold
 
 open_fold "Attach: curl raw IP without dns request blocked"
 
-    attach_firewall_test "--debug --allow-list bing.com " "curl  --max-time 5 http://1.1.1.1"
-    assert_exit_code 52
+    attach_firewall_test "--debug --allow-list bing.com " "curl --fail-with-body --max-time 5 http://1.1.1.1"
+    assert_exit_code 22
 
 close_fold

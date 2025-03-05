@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,12 +23,8 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
 
-func orPanic(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
+// Track the underlying connection against the request context for
+// http requests so we can use it to get the socket cookie
 type contextKey struct {
 	key string
 }
@@ -41,8 +38,23 @@ func GetConn(r *http.Request) net.Conn {
 	return r.Context().Value(ConnContextKey).(net.Conn)
 }
 
-func parseCA(caCert, caKey []byte) (*tls.Certificate, error) {
-	parsedCert, err := tls.X509KeyPair(caCert, caKey)
+// Load the mkcert root CA certificate and key
+// Assumes `mkcert -install` has been run
+func loadMkcertRootCA() (*tls.Certificate, error) {
+	caCertPath := "/root/.local/share/mkcert/rootCA.pem"
+	caCertKeyPath := "/root/.local/share/mkcert/rootCA-key.pem"
+
+	caCertContent, err := os.ReadFile(caCertPath)
+	if err != nil {
+		log.Fatalf("Error reading CA certificate: %v", err)
+	}
+
+	caKeyContent, err := os.ReadFile(caCertKeyPath)
+	if err != nil {
+		log.Fatalf("Error reading CA key: %v", err)
+	}
+
+	parsedCert, err := tls.X509KeyPair(caCertContent, caKeyContent)
 	if err != nil {
 		return nil, err
 	}
@@ -62,20 +74,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 		log.Printf("Server starting up! - configured to listen on http interface %s and https interface %s", http_addr, https_addr)
 	}
 
-	caCertPath := "/root/.local/share/mkcert/rootCA.pem"
-	caCertKeyPath := "/root/.local/share/mkcert/rootCA-key.pem"
-
-	caCertContent, err := os.ReadFile(caCertPath)
-	if err != nil {
-		log.Fatalf("Error reading CA certificate: %v", err)
-	}
-
-	caKeyContent, err := os.ReadFile(caCertKeyPath)
-	if err != nil {
-		log.Fatalf("Error reading CA key: %v", err)
-	}
-
-	cert, err := parseCA(caCertContent, caKeyContent)
+	cert, err := loadMkcertRootCA()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -85,75 +84,29 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 		return customCaMitm, host
 	}
 
-	// proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*$"))).
-	// 	HandleConnect(goproxy.AlwaysMitm)
+	// Intercept and MITM the CONNECT requests for HTTPS
 	proxy.OnRequest().HandleConnect(customAlwaysMitm)
 
-	// proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*:80$"))).
-	// 	HijackConnect(func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
-	// 		slog.Info("client type", "type", fmt.Sprintf("%T", client))
-	// 		defer func() {
-	// 			if e := recover(); e != nil {
-	// 				ctx.Logf("error connecting to remote: %v", e)
-	// 				_, err := client.Write([]byte("HTTP/1.1 500 Cannot reach destination\r\n\r\n"))
-	// 				if err != nil {
-	// 					ctx.Logf("error writing error response: %v", err)
-	// 				}
-	// 			}
-	// 			client.Close()
-	// 		}()
+	// Blocking logic in the proxy
+	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		for _, domain := range firewallDomains {
+			if firewall.FirewallMethod == models.AllowList {
+				if !strings.Contains(req.Host, domain) {
+					log.Printf("http proxy blocked domain not on allow list: %v", domain)
+					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
+				}
+			} else if firewall.FirewallMethod == models.BlockList {
+				if strings.Contains(req.Host, domain) {
+					log.Printf("http proxy blocked domain: %v", domain)
+					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
+				}
+			}
+		}
 
-	// 		// panic("test")
+		return req, nil
+	})
 
-	// 		underlyingConn, ok := client.(dumbResponseWriter)
-	// 		if !ok {
-	// 			panic("client is not a dumbResponseWriter")
-	// 		}
-	// 		socketCookie, err := underlyingConn.SocketCookie()
-	// 		if err != nil {
-	// 			ctx.Logf("error getting socket cookie: %v", err)
-	// 		}
-
-	// 		slog.Warn("socket cookie", "cookie", socketCookie)
-
-	// 		localAddr := underlyingConn.LocalAddr().(*net.TCPAddr)
-	// 		sourcePort := localAddr.Port
-	// 		log.Printf("source port: %v", sourcePort)
-
-	// 		// ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
-	// 		// if err != nil {
-	// 		// 	log.Printf("error getting host and port from source port: %v", err)
-	// 		// }
-
-	// 		// req.URL.Scheme = "https"
-	// 		// req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
-	// 		// log.Printf("new host: %v", req.URL.Host)
-
-	// 		clientBuf := bufio.NewReadWriter(bufio.NewReader(client), bufio.NewWriter(client))
-
-	// 		remote, err := connectDial(req.Context(), proxy, "tcp", req.URL.Host)
-	// 		orPanic(err)
-
-	// 		ctx.Logf("remote addr: %v", remote.RemoteAddr())
-	// 		// if firewall.FirewallMethod == models.AllowList {
-	// 		// 	remote.RemoteAddr()
-	// 		// } else if firewall.FirewallMethod == models.BlockList {
-
-	// 		// }
-
-	// 		remoteBuf := bufio.NewReadWriter(bufio.NewReader(remote), bufio.NewWriter(remote))
-	// 		for {
-	// 			req, err := http.ReadRequest(clientBuf.Reader)
-	// 			orPanic(err)
-	// 			orPanic(req.Write(remoteBuf))
-	// 			orPanic(remoteBuf.Flush())
-	// 			resp, err := http.ReadResponse(remoteBuf.Reader, req)
-	// 			orPanic(err)
-	// 			orPanic(resp.Write(clientBuf.Writer))
-	// 			orPanic(clientBuf.Flush())
-	// 		}
-	// 	})
-
+	// Handle http requests sent to the proxy
 	proxy.NonproxyHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Host == "" {
 			fmt.Fprintln(w, "Cannot handle requests without Host header, e.g., HTTP 1.0")
@@ -162,37 +115,15 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 
 		conn := GetConn(req)
 
-		localAddr := conn.RemoteAddr().(*net.TCPAddr)
-		sourcePort := localAddr.Port
-		log.Printf("source port: %v", sourcePort)
-
-		ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
-		if err != nil {
-			log.Printf("error getting host and port from source port: %v", err)
-		}
+		_, port := getOriginalIpAndPortFromConn(conn, firewall)
 
 		originalHost := req.Host
-		log.Printf("original host: %v", originalHost)
+		slog.Info("original host", slog.String("host", originalHost))
 		log.Printf("full url: %v", req.URL.String())
 		log.Printf("request method: %v", req.Method)
 
-		for _, domain := range firewallDomains {
-			if firewall.FirewallMethod == models.AllowList {
-				if !strings.Contains(originalHost, domain) {
-					log.Printf("http proxy blocked domain not on allow list: %v", domain)
-					conn.Close()
-				}
-			} else if firewall.FirewallMethod == models.BlockList {
-				if strings.Contains(originalHost, domain) {
-					log.Printf("http proxy blocked domain: %v", domain)
-					conn.Close()
-					return
-				}
-			}
-		}
-
 		req.URL.Scheme = "http"
-		req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
+		req.URL.Host = fmt.Sprintf("%s:%d", originalHost, port)
 		log.Printf("new host: %v", req.URL.Host)
 
 		proxy.ServeHTTP(w, req)
@@ -208,7 +139,9 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 		log.Fatalln(server.ListenAndServe())
 	}()
 
-	// // listen to the TLS ClientHello but make it a CONNECT request instead
+	// Handle https requests sent to the proxy through transparent redirect
+	// convert them to look like CONNECT requests that would be sent to the proxy by
+	// client configured to use it
 	go func() {
 		ln, err := net.Listen("tcp", https_addr)
 		if err != nil {
@@ -222,6 +155,9 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			}
 			go func(c net.Conn) {
 				tlsConn, err := vhost.TLS(c)
+
+				_, port := getOriginalIpAndPortFromConn(tlsConn.Conn, firewall)
+
 				log.Printf("tlsConn: %v", tlsConn)
 				if err != nil {
 					log.Printf("Error accepting new connection - %v", err)
@@ -230,11 +166,12 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 					log.Printf("Cannot support non-SNI enabled clients")
 					return
 				}
+
 				connectReq := &http.Request{
 					Method: http.MethodConnect,
 					URL: &url.URL{
 						Opaque: tlsConn.Host(),
-						Host:   net.JoinHostPort(tlsConn.Host(), "443"),
+						Host:   net.JoinHostPort(tlsConn.Host(), fmt.Sprint(port)),
 					},
 					Host:       tlsConn.Host(),
 					Header:     make(http.Header),
@@ -247,21 +184,17 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 	}()
 }
 
-// copied/converted from https.go
-func dial(ctx context.Context, proxy *goproxy.ProxyHttpServer, network, addr string) (c net.Conn, err error) {
-	if proxy.Tr.DialContext != nil {
-		return proxy.Tr.DialContext(ctx, network, addr)
-	}
-	var d net.Dialer
-	return d.DialContext(ctx, network, addr)
-}
+func getOriginalIpAndPortFromConn(conn net.Conn, firewall *ebpf.DnsFirewall) (net.IP, int) {
+	localAddr := conn.RemoteAddr().(*net.TCPAddr)
+	sourcePort := localAddr.Port
 
-// copied/converted from https.go
-func connectDial(ctx context.Context, proxy *goproxy.ProxyHttpServer, network, addr string) (c net.Conn, err error) {
-	if proxy.ConnectDial == nil {
-		return dial(ctx, proxy, network, addr)
+	slog.Default().Warn("sourcePort", slog.Int("sourcePort", sourcePort))
+
+	ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
+	if err != nil {
+		log.Printf("error getting host and port from source port: %v", err)
 	}
-	return proxy.ConnectDial(network, addr)
+	return ip, port
 }
 
 type dumbResponseWriter struct {
