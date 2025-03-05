@@ -26,12 +26,6 @@ type bpfEvent struct {
 	_                [3]byte
 }
 
-type bpfSvcAddr struct {
-	Addr uint32
-	Port uint16
-	_    [2]byte
-}
-
 // loadBpf returns the embedded CollectionSpec for bpf.
 func loadBpf() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_BpfBytes)
@@ -85,8 +79,8 @@ type bpfProgramSpecs struct {
 type bpfMapSpecs struct {
 	Events                   *ebpf.MapSpec `ebpf:"events"`
 	FirewallIpMap            *ebpf.MapSpec `ebpf:"firewall_ip_map"`
-	SockClientToOriginalDest *ebpf.MapSpec `ebpf:"sock_client_to_original_dest"`
-	SockServerToSockClient   *ebpf.MapSpec `ebpf:"sock_server_to_sock_client"`
+	SockClientToOriginalIp   *ebpf.MapSpec `ebpf:"sock_client_to_original_ip"`
+	SockClientToOriginalPort *ebpf.MapSpec `ebpf:"sock_client_to_original_port"`
 	SocketPidMap             *ebpf.MapSpec `ebpf:"socket_pid_map"`
 	SrcPortToSockClient      *ebpf.MapSpec `ebpf:"src_port_to_sock_client"`
 }
@@ -112,8 +106,8 @@ func (o *bpfObjects) Close() error {
 type bpfMaps struct {
 	Events                   *ebpf.Map `ebpf:"events"`
 	FirewallIpMap            *ebpf.Map `ebpf:"firewall_ip_map"`
-	SockClientToOriginalDest *ebpf.Map `ebpf:"sock_client_to_original_dest"`
-	SockServerToSockClient   *ebpf.Map `ebpf:"sock_server_to_sock_client"`
+	SockClientToOriginalIp   *ebpf.Map `ebpf:"sock_client_to_original_ip"`
+	SockClientToOriginalPort *ebpf.Map `ebpf:"sock_client_to_original_port"`
 	SocketPidMap             *ebpf.Map `ebpf:"socket_pid_map"`
 	SrcPortToSockClient      *ebpf.Map `ebpf:"src_port_to_sock_client"`
 }
@@ -122,8 +116,8 @@ func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.Events,
 		m.FirewallIpMap,
-		m.SockClientToOriginalDest,
-		m.SockServerToSockClient,
+		m.SockClientToOriginalIp,
+		m.SockClientToOriginalPort,
 		m.SocketPidMap,
 		m.SrcPortToSockClient,
 	)

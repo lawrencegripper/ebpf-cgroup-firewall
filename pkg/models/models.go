@@ -30,3 +30,13 @@ func IPToInt(val string) uint32 {
 	ip := net.ParseIP(val).To4()
 	return binary.LittleEndian.Uint32(ip)
 }
+
+func IntToIP(val uint32) net.IP {
+	ip := make(net.IP, 4)
+	binary.LittleEndian.PutUint32(ip, val)
+	return ip
+}
+
+func IntToPort(val uint16) uint16 {
+	return binary.BigEndian.Uint16([]byte{byte(val >> 8), byte(val & 0xff)})
+}

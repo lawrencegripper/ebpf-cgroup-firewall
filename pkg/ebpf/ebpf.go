@@ -107,19 +107,22 @@ func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (string, int, er
 
 	slog.Warn("clientSocketCookie", "clientSocketCookie", clientSocketCookie)
 
-	// slog.Warn("sockClientToOriginalDest")
-	// dest := "" //TODO: Fix this up
-	// iterateOvereBPFMap(maps.SockClientToOriginalDest.Iterate(), dest)
-	// slog.Warn("sockServerToSockClient")
-	// clientCookie := uint64(16)
-	// iterateOvereBPFMap(maps.SockServerToSockClient.Iterate(), clientCookie)
+	originalIPBitwise := uint32(16)
+	err = maps.SockClientToOriginalIp.Lookup(clientSocketCookie, &originalIPBitwise)
+	if err != nil {
+		slog.Warn("sockClientToOriginalIp", "error", err)
+	}
 
-	// err := clientSocketCookie.Lookup(serverSocketCookie, output)
-	// if err != nil {
-	// 	return x.String(), 0, fmt.Errorf("looking up service mapping: %w", err)
-	// }
+	originalIp := models.IntToIP(originalIPBitwise)
+	slog.Warn("originalIPBitwise", "originalIPBitwise", originalIp)
 
-	return "", 0, errors.New("no output found")
+	originalPort := uint16(16)
+	err = maps.SockClientToOriginalPort.Lookup(clientSocketCookie, &originalPort)
+	if err != nil {
+		slog.Warn("sockClientToOriginalPort", "error", err)
+	}
+
+	return string(originalIp), int(originalPort), nil
 }
 
 func iterateOvereBPFMap(iter *ebpf.MapIterator) {

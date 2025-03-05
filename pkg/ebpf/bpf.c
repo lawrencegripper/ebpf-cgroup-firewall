@@ -58,9 +58,19 @@ struct
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __type(key, __u64);
-    __type(value, struct svc_addr);
+    __type(value, __be32);
     __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
-} sock_client_to_original_dest SEC(".maps");
+} sock_client_to_original_ip SEC(".maps");
+
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __type(key, __u64);
+    __type(value, __u16);
+    __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
+} sock_client_to_original_port SEC(".maps");
 
 struct
 {
@@ -71,14 +81,14 @@ struct
     __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } src_port_to_sock_client SEC(".maps");
 
-struct 
-{
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(map_flags, BPF_F_NO_PREALLOC);
-    __type(key, __u64);
-    __type(value, __u64);
-    __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
-} sock_server_to_sock_client SEC(".maps");
+// struct 
+// {
+//     __uint(type, BPF_MAP_TYPE_HASH);
+//     __uint(map_flags, BPF_F_NO_PREALLOC);
+//     __type(key, __u64);
+//     __type(value, __u64);
+//     __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
+// } sock_server_to_sock_client SEC(".maps");
 
 /* Map for allowed IP addresses from userspace. This is populated with the responses to dns queries */
 struct
@@ -127,11 +137,14 @@ int connect4(struct bpf_sock_addr *ctx)
 
     __u64 socketCookie = bpf_get_socket_cookie(ctx);
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
-    bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);
-
-    
+    bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);    
 
     bool didRedirect = false;
+
+    // TODO: Store this in host byte order too
+    __be32 original_ip = ctx->user_ip4;
+    // Convert to host byte order from network byte order
+    __u16 original_port = bpf_ntohs(ctx->user_port);
 
     if (ctx->user_port == bpf_htons(80) && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)
     {
@@ -173,15 +186,9 @@ int connect4(struct bpf_sock_addr *ctx)
 
     if (didRedirect)
     {
-        /* Create storage for the original destination */
-        struct svc_addr orig_addr = {0};
-        orig = &orig_addr;
-
-        orig->addr = ctx->user_ip4;
-        orig->port = ctx->user_port;
-
         /* Store the original destination of the request */
-        bpf_map_update_elem(&sock_client_to_original_dest, &socketCookie, orig, BPF_ANY);
+        bpf_map_update_elem(&sock_client_to_original_ip, &socketCookie, &original_ip, BPF_ANY);
+        bpf_map_update_elem(&sock_client_to_original_port, &socketCookie, &original_port, BPF_ANY);
     }
 
     return 1;

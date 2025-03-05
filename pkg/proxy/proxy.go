@@ -125,7 +125,13 @@ func Start(firewall *ebpf.DnsFirewall) {
 		sourcePort := localAddr.Port
 		log.Printf("source port: %v", sourcePort)
 
-		firewall.HostAndPortFromSourcePort(sourcePort)
+		ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
+		if err != nil {
+			log.Printf("error getting host and port from source port: %v", err)
+		}
+
+		req.URL.Scheme = "http"
+		req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
 
 		// log.Println(conn.RemoteAddr())
 
@@ -135,7 +141,7 @@ func Start(firewall *ebpf.DnsFirewall) {
 		// 	log.Printf("error getting host and port from socket cookie: %v", err)
 		// }
 		// log.Printf("host: %v, port: %v", host, port)
-		panic(1)
+		// panic(1)
 		proxy.ServeHTTP(w, req)
 	})
 
