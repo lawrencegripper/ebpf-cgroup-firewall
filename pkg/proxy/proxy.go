@@ -8,10 +8,12 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/elazarl/goproxy"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
 
@@ -122,20 +124,25 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			log.Printf("error getting host and port from source port: %v", err)
 		}
 
-		originalHost := req.URL.Host
+		originalHost := req.Host
 		log.Printf("original host: %v", originalHost)
+		log.Printf("full url: %v", req.URL.String())
+		log.Printf("request method: %v", req.Method)
 
-		// for _, domain := range firewallDomains {
-		// 	if firewall.FirewallMethod == models.AllowList {
-		// 		if !strings.Contains(originalHost, domain) {
-		// 			w.WriteHeader(http.StatusForbidden)
-		// 		}
-		// 	} else if firewall.FirewallMethod == models.BlockList {
-		// 		if strings.Contains(originalHost, domain) {
-		// 			w.WriteHeader(http.StatusForbidden)
-		// 		}
-		// 	}
-		// }
+		for _, domain := range firewallDomains {
+			if firewall.FirewallMethod == models.AllowList {
+				if !strings.Contains(originalHost, domain) {
+					log.Printf("http proxy blocked domain not on allow list: %v", domain)
+					conn.Close()
+				}
+			} else if firewall.FirewallMethod == models.BlockList {
+				if strings.Contains(originalHost, domain) {
+					log.Printf("http proxy blocked domain: %v", domain)
+					conn.Close()
+					return
+				}
+			}
+		}
 
 		req.URL.Scheme = "http"
 		req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
