@@ -8,7 +8,7 @@ require (
 	github.com/elazarl/goproxy v1.7.0
 )
 
-replace github.com/elazarl/goproxy v1.7.0 => ./goproxy
+// replace github.com/elazarl/goproxy v1.7.0 => ./goproxy
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

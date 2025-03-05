@@ -73,6 +73,7 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
+	CgSockOps       *ebpf.ProgramSpec `ebpf:"cg_sock_ops"`
 	CgroupSkbEgress *ebpf.ProgramSpec `ebpf:"cgroup_skb_egress"`
 	Connect4        *ebpf.ProgramSpec `ebpf:"connect4"`
 	Getpeername4    *ebpf.ProgramSpec `ebpf:"getpeername4"`
@@ -82,10 +83,12 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	Events         *ebpf.MapSpec `ebpf:"events"`
-	FirewallIpMap  *ebpf.MapSpec `ebpf:"firewall_ip_map"`
-	ServiceMapping *ebpf.MapSpec `ebpf:"service_mapping"`
-	SocketPidMap   *ebpf.MapSpec `ebpf:"socket_pid_map"`
+	Events                   *ebpf.MapSpec `ebpf:"events"`
+	FirewallIpMap            *ebpf.MapSpec `ebpf:"firewall_ip_map"`
+	SockClientToOriginalDest *ebpf.MapSpec `ebpf:"sock_client_to_original_dest"`
+	SockServerToSockClient   *ebpf.MapSpec `ebpf:"sock_server_to_sock_client"`
+	SocketPidMap             *ebpf.MapSpec `ebpf:"socket_pid_map"`
+	SrcPortToSockClient      *ebpf.MapSpec `ebpf:"src_port_to_sock_client"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -107,18 +110,22 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	Events         *ebpf.Map `ebpf:"events"`
-	FirewallIpMap  *ebpf.Map `ebpf:"firewall_ip_map"`
-	ServiceMapping *ebpf.Map `ebpf:"service_mapping"`
-	SocketPidMap   *ebpf.Map `ebpf:"socket_pid_map"`
+	Events                   *ebpf.Map `ebpf:"events"`
+	FirewallIpMap            *ebpf.Map `ebpf:"firewall_ip_map"`
+	SockClientToOriginalDest *ebpf.Map `ebpf:"sock_client_to_original_dest"`
+	SockServerToSockClient   *ebpf.Map `ebpf:"sock_server_to_sock_client"`
+	SocketPidMap             *ebpf.Map `ebpf:"socket_pid_map"`
+	SrcPortToSockClient      *ebpf.Map `ebpf:"src_port_to_sock_client"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.Events,
 		m.FirewallIpMap,
-		m.ServiceMapping,
+		m.SockClientToOriginalDest,
+		m.SockServerToSockClient,
 		m.SocketPidMap,
+		m.SrcPortToSockClient,
 	)
 }
 
@@ -126,6 +133,7 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
+	CgSockOps       *ebpf.Program `ebpf:"cg_sock_ops"`
 	CgroupSkbEgress *ebpf.Program `ebpf:"cgroup_skb_egress"`
 	Connect4        *ebpf.Program `ebpf:"connect4"`
 	Getpeername4    *ebpf.Program `ebpf:"getpeername4"`
@@ -133,6 +141,7 @@ type bpfPrograms struct {
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
+		p.CgSockOps,
 		p.CgroupSkbEgress,
 		p.Connect4,
 		p.Getpeername4,

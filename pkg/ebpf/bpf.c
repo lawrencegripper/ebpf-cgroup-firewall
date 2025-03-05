@@ -45,6 +45,13 @@ struct
     __uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
+// Two socket cookies. SockClient and SockServer. 
+// SockClient is the one created when calling the server
+// SockServer is the one create on receiving server
+// These two are mapped together based on us being both the client
+// and the server. We can track src port on sockClient and 
+// match to sockServer via `sockops` ebpf progam
+
 /* Map the original destination to socket cookie */
 struct
 {
@@ -53,7 +60,25 @@ struct
     __type(key, __u64);
     __type(value, struct svc_addr);
     __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
-} service_mapping SEC(".maps");
+} sock_client_to_original_dest SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __type(key, __u64);
+    __type(value, __u32);
+    __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
+} src_port_to_sock_client SEC(".maps");
+
+struct 
+{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __type(key, __u64);
+    __type(value, __u64);
+    __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
+} sock_server_to_sock_client SEC(".maps");
 
 /* Map for allowed IP addresses from userspace. This is populated with the responses to dns queries */
 struct
@@ -156,7 +181,7 @@ int connect4(struct bpf_sock_addr *ctx)
         orig->port = ctx->user_port;
 
         /* Store the original destination of the request */
-        bpf_map_update_elem(&service_mapping, &socketCookie, orig, BPF_ANY);
+        bpf_map_update_elem(&sock_client_to_original_dest, &socketCookie, orig, BPF_ANY);
     }
 
     return 1;
@@ -167,6 +192,36 @@ int getpeername4(struct bpf_sock_addr *ctx)
 {
     struct svc_addr *orig;
     return 1;
+}
+
+// Map the outgoing socket to the incoming socket seen in userland proxy
+// via the src port and the socket cookie
+SEC("sockops")
+int cg_sock_ops(struct bpf_sock_ops *ctx) {
+  if (ctx->family != AF_INET) return 0;
+
+  // Outbound connection established (ie. Client calling out)
+  // So a client program has done `curl example.com` 
+  if (ctx->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
+    __u64 cookie = bpf_get_socket_cookie(ctx);
+    __u16 src_port = ctx->local_port;
+    bpf_map_update_elem(&src_port_to_sock_client, &src_port, &cookie, 0);
+  }
+
+  // Inbound connection estabilished (ie. Server receiving call)
+  // Our client program `curl example.com` has been redirected to our 
+  // proxy server
+  if (ctx->op == BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB) {
+    __u64 cookie = bpf_get_socket_cookie(ctx);
+    __u16 sender_port = ctx->remote_port;
+    
+    __u64 *sock_client = bpf_map_lookup_elem(&src_port_to_sock_client, &sender_port);
+    if (sock_client) {
+      bpf_map_update_elem(&sock_server_to_sock_client, &cookie, &sock_client, 0);
+    }
+  }
+
+  return 0;
 }
 
 SEC("cgroup_skb/egress")

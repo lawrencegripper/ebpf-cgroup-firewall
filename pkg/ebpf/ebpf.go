@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"net"
 	"os"
@@ -85,33 +86,37 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 	return blockedEventsCopy
 }
 
-func (e *DnsFirewall) HostAndPortFromSocketCookie(cookie utils.SocketCookie) (string, int, error) {
-	serviceMapping := e.Objects.bpfMaps.ServiceMapping
-	output := &map[string]string{}
-	fmt.Printf("cookie: %v", cookie)
+func (e *DnsFirewall) HostAndPortFromSocketCookie(serverSocketCookie utils.SocketCookie) (string, int, error) {
+	maps := e.Objects.bpfMaps
+	// serverSocketCookie :=
+	// output := &map[string]string{}
+	slog.Warn("server cookie", "serverSocketCookie", serverSocketCookie)
 
-	iter := serviceMapping.Iterate()
+	slog.Warn("srcPortToSockClient")
+	iterateOvereBPFMap(maps.SrcPortToSockClient.Iterate())
+	slog.Warn("sockClientToOriginalDest")
+	iterateOvereBPFMap(maps.SockClientToOriginalDest.Iterate())
+	slog.Warn("sockServerToSockClient")
+	iterateOvereBPFMap(maps.SockServerToSockClient.Iterate())
+
+	// err := clientSocketCookie.Lookup(serverSocketCookie, output)
+	// if err != nil {
+	// 	return x.String(), 0, fmt.Errorf("looking up service mapping: %w", err)
+	// }
+
+	return "", 0, errors.New("no output found")
+}
+
+func iterateOvereBPFMap(iter *ebpf.MapIterator) {
 	key := uint64(16)
 	value := ""
 
-	fmt.Println("key size")
-	fmt.Println(serviceMapping.KeySize())
-
-	var x strings.Builder
 	for iter.Next(&key, &value) {
-		x.WriteString(fmt.Sprintf("key: %v, value: %v\n", key, value))
-		fmt.Errorf("key: %v, value: %v\n", key, value)
+		slog.Warn(fmt.Sprintf("key: %v, value: %v\n", key, value))
 	}
 	if err := iter.Err(); err != nil {
-		return x.String(), 0, fmt.Errorf("iterating service mapping: %w", err)
+		slog.Error("iterating over eBPF map", logger.SlogError(err))
 	}
-
-	err := serviceMapping.Lookup(cookie, output)
-	if err != nil {
-		return x.String(), 0, fmt.Errorf("looking up service mapping: %w", err)
-	}
-
-	return x.String(), 0, errors.New("no output found")
 }
 
 // TODO
@@ -233,6 +238,7 @@ func AttachRedirectorToCGroup(
 		return nil, fmt.Errorf("attaching eBPF program to cgroup: %w", err)
 	}
 
+	// TODO store link and use it to pin
 	_, err = link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroup.Name(),
 		Attach:  ebpf.AttachCGroupInetEgress,
@@ -240,6 +246,16 @@ func AttachRedirectorToCGroup(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("attaching eBPF program to cgroup: %w", err)
+	}
+
+	// TODO store link and use it to pin
+	_, err = link.AttachCgroup(link.CgroupOptions{
+		Path:    cgroup.Name(),
+		Attach:  ebpf.AttachCGroupSockOps,
+		Program: obj.CgSockOps,
+	})
+	if err != nil {
+		log.Print("Attaching CgSockOpt program to Cgroup:", err)
 	}
 
 	// Open a ringbuf reader from userspace RINGBUF map described in the

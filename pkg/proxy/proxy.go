@@ -43,18 +43,18 @@ func Start(firewall *ebpf.DnsFirewall) {
 		log.Printf("Server starting up! - configured to listen on http interface %s and https interface", http_addr)
 	}
 
-	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		log.Printf("resquest: %v", 1)
+	// proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	// 	log.Printf("resquest: %v", 1)
 
-		conn := GetConn(req)
-		socketCookie, err := utils.GetSocketCookie(conn)
-		if err != nil {
-			ctx.Logf("error getting socket cookie: %v", err)
-		}
-		log.Printf("socket cookie: %v", socketCookie)
+	// 	conn := GetConn(req)
+	// 	socketCookie, err := utils.GetSocketCookie(conn)
+	// 	if err != nil {
+	// 		ctx.Logf("error getting socket cookie: %v", err)
+	// 	}
+	// 	log.Printf("socket cookie: %v", socketCookie)
 
-		return req, nil
-	})
+	// 	return req, nil
+	// })
 
 	// proxy.OnRequest().HijackConnect()
 	proxy.OnRequest().
@@ -120,7 +120,7 @@ func Start(firewall *ebpf.DnsFirewall) {
 		if err != nil {
 			log.Printf("error getting socket cookie: %v", err)
 		}
-		log.Printf("socket cookie: %v", socketCookie)
+		log.Printf("server socket cookie: %v", socketCookie)
 		host, port, err := firewall.HostAndPortFromSocketCookie(socketCookie)
 		if err != nil {
 			log.Printf("error getting host and port from socket cookie: %v", err)
