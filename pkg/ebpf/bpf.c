@@ -146,7 +146,9 @@ int connect4(struct bpf_sock_addr *ctx)
     // Convert to host byte order from network byte order
     __u16 original_port = bpf_ntohs(ctx->user_port);
 
-    if (ctx->user_port == bpf_htons(80) && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)
+    // TODO: This shoul detect if the packet shape is HTTPish rather than relying on ports
+    bool isHttpOrHttpsPort = ctx->user_port == bpf_htons(80) || ctx->user_port == bpf_htons(443);
+    if (isHttpOrHttpsPort && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)
     {
         didRedirect = true;
         // /* Store the original destination so we can map it back when a response is received */
@@ -159,7 +161,16 @@ int connect4(struct bpf_sock_addr *ctx)
 
         /* This is the hexadecimal representation of 127.0.0.1 address */
         ctx->user_ip4 = bpf_htonl(0x7f000001);
-        ctx->user_port = bpf_htons(6775);
+        
+        // TODO: Determine if the connection is https and send by taking a look at it
+        // rather than relying on ports
+        if (ctx->user_port == bpf_htons(80)) {
+            ctx->user_port = bpf_htons(6775);
+        }
+
+        if (ctx->user_port == bpf_htons(443)) {
+            ctx->user_port = bpf_htons(6776);
+        }
     }
 
     /* For DNS Query (*:53) rewire service to backend 127.0.0.1:8853. */

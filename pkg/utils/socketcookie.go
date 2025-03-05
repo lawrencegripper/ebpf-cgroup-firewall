@@ -2,8 +2,10 @@ package utils
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 
+	"github.com/inconshreveable/go-vhost"
 	"golang.org/x/sys/unix"
 )
 
@@ -12,7 +14,15 @@ type SocketCookie uint64
 func GetSocketCookie(conn net.Conn) (SocketCookie, error) {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
-		return 0, fmt.Errorf("conn is not a TCPConn")
+		slog.Warn("conn is not a TCPConn")
+
+		// Is it a TLSConn?
+		tlsConn, ok := conn.(*vhost.TLSConn)
+		if !ok {
+			return 0, fmt.Errorf("conn is not a TLSConn")
+		}
+
+		tcpConn = tlsConn.Conn.(*net.TCPConn)
 	}
 
 	raw, err := tcpConn.SyscallConn()

@@ -6,11 +6,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/elazarl/goproxy"
+	"github.com/inconshreveable/go-vhost"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
@@ -38,28 +41,14 @@ func GetConn(r *http.Request) net.Conn {
 
 func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string) {
 	http_addr := ":6775"
-	// https_addr := flag.String("httpsaddr", ":3128", "proxy https listen address")
+	https_addr := ":6776"
 
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = true
 	if proxy.Verbose {
-		log.Printf("Server starting up! - configured to listen on http interface %s and https interface", http_addr)
+		log.Printf("Server starting up! - configured to listen on http interface %s and https interface %s", http_addr, https_addr)
 	}
 
-	// proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-	// 	log.Printf("resquest: %v", 1)
-
-	// 	conn := GetConn(req)
-	// 	socketCookie, err := utils.GetSocketCookie(conn)
-	// 	if err != nil {
-	// 		ctx.Logf("error getting socket cookie: %v", err)
-	// 	}
-	// 	log.Printf("socket cookie: %v", socketCookie)
-
-	// 	return req, nil
-	// })
-
-	// proxy.OnRequest().HijackConnect()
 	proxy.OnRequest().
 		HijackConnect(func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
 			defer func() {
@@ -70,17 +59,19 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 				client.Close()
 			}()
 
-			panic("test")
+			// panic("test")
 
-			ctx.Logf("hello!")
-
-			socketCookie, err := utils.GetSocketCookie(client)
+			slog.Info("client type", "type", fmt.Sprintf("%T", client))
+			underlyingConn, ok := client.(dumbResponseWriter)
+			if !ok {
+				panic("client is not a dumbResponseWriter")
+			}
+			socketCookie, err := underlyingConn.SocketCookie()
 			if err != nil {
 				ctx.Logf("error getting socket cookie: %v", err)
 			}
 
-			ctx.Logf("socket cookie: %v", socketCookie)
-			log.Printf("socket cookie: %v", socketCookie)
+			slog.Warn("socket cookie", "cookie", socketCookie)
 
 			clientBuf := bufio.NewReadWriter(bufio.NewReader(client), bufio.NewWriter(client))
 
@@ -162,39 +153,42 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 	}()
 
 	// // listen to the TLS ClientHello but make it a CONNECT request instead
-	// ln, err := net.Listen("tcp", *https_addr)
-	// if err != nil {
-	// 	log.Fatalf("Error listening for https connections - %v", err)
-	// }
-	// for {
-	// 	c, err := ln.Accept()
-	// 	if err != nil {
-	// 		log.Printf("Error accepting new connection - %v", err)
-	// 		continue
-	// 	}
-	// 	go func(c net.Conn) {
-	// 		tlsConn, err := vhost.TLS(c)
-	// 		if err != nil {
-	// 			log.Printf("Error accepting new connection - %v", err)
-	// 		}
-	// 		if tlsConn.Host() == "" {
-	// 			log.Printf("Cannot support non-SNI enabled clients")
-	// 			return
-	// 		}
-	// 		connectReq := &http.Request{
-	// 			Method: http.MethodConnect,
-	// 			URL: &url.URL{
-	// 				Opaque: tlsConn.Host(),
-	// 				Host:   net.JoinHostPort(tlsConn.Host(), "443"),
-	// 			},
-	// 			Host:       tlsConn.Host(),
-	// 			Header:     make(http.Header),
-	// 			RemoteAddr: c.RemoteAddr().String(),
-	// 		}
-	// 		resp := dumbResponseWriter{tlsConn}
-	// 		proxy.ServeHTTP(resp, connectReq)
-	// 	}(c)
-	// }
+	go func() {
+		ln, err := net.Listen("tcp", https_addr)
+		if err != nil {
+			log.Fatalf("Error listening for https connections - %v", err)
+		}
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				log.Printf("Error accepting new connection - %v", err)
+				continue
+			}
+			go func(c net.Conn) {
+				tlsConn, err := vhost.TLS(c)
+				log.Printf("tlsConn: %v", tlsConn)
+				if err != nil {
+					log.Printf("Error accepting new connection - %v", err)
+				}
+				if tlsConn.Host() == "" {
+					log.Printf("Cannot support non-SNI enabled clients")
+					return
+				}
+				connectReq := &http.Request{
+					Method: http.MethodConnect,
+					URL: &url.URL{
+						Opaque: tlsConn.Host(),
+						Host:   net.JoinHostPort(tlsConn.Host(), "443"),
+					},
+					Host:       tlsConn.Host(),
+					Header:     make(http.Header),
+					RemoteAddr: c.RemoteAddr().String(),
+				}
+				resp := dumbResponseWriter{tlsConn}
+				proxy.ServeHTTP(resp, connectReq)
+			}(c)
+		}
+	}()
 }
 
 // copied/converted from https.go
@@ -216,6 +210,10 @@ func connectDial(ctx context.Context, proxy *goproxy.ProxyHttpServer, network, a
 
 type dumbResponseWriter struct {
 	net.Conn
+}
+
+func (dumb dumbResponseWriter) SocketCookie() (utils.SocketCookie, error) {
+	return utils.GetSocketCookie(dumb.Conn)
 }
 
 func (dumb dumbResponseWriter) Header() http.Header {
