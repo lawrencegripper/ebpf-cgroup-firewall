@@ -4,13 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
+	"os"
 	"strings"
 
 	"github.com/elazarl/goproxy"
@@ -40,6 +41,17 @@ func GetConn(r *http.Request) net.Conn {
 	return r.Context().Value(ConnContextKey).(net.Conn)
 }
 
+func parseCA(caCert, caKey []byte) (*tls.Certificate, error) {
+	parsedCert, err := tls.X509KeyPair(caCert, caKey)
+	if err != nil {
+		return nil, err
+	}
+	if parsedCert.Leaf, err = x509.ParseCertificate(parsedCert.Certificate[0]); err != nil {
+		return nil, err
+	}
+	return &parsedCert, nil
+}
+
 func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string) {
 	http_addr := ":6775"
 	https_addr := ":6776"
@@ -50,70 +62,97 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 		log.Printf("Server starting up! - configured to listen on http interface %s and https interface %s", http_addr, https_addr)
 	}
 
-	proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*$"))).
-		HandleConnect(goproxy.AlwaysMitm)
+	caCertPath := "/root/.local/share/mkcert/rootCA.pem"
+	caCertKeyPath := "/root/.local/share/mkcert/rootCA-key.pem"
 
-	proxy.OnRequest().
-		HijackConnect(func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
-			defer func() {
-				if e := recover(); e != nil {
-					ctx.Logf("error connecting to remote: %v", e)
-					client.Write([]byte("HTTP/1.1 500 Cannot reach destination\r\n\r\n"))
-				}
-				client.Close()
-			}()
+	caCertContent, err := os.ReadFile(caCertPath)
+	if err != nil {
+		log.Fatalf("Error reading CA certificate: %v", err)
+	}
 
-			// panic("test")
+	caKeyContent, err := os.ReadFile(caCertKeyPath)
+	if err != nil {
+		log.Fatalf("Error reading CA key: %v", err)
+	}
 
-			slog.Info("client type", "type", fmt.Sprintf("%T", client))
-			underlyingConn, ok := client.(dumbResponseWriter)
-			if !ok {
-				panic("client is not a dumbResponseWriter")
-			}
-			socketCookie, err := underlyingConn.SocketCookie()
-			if err != nil {
-				ctx.Logf("error getting socket cookie: %v", err)
-			}
+	cert, err := parseCA(caCertContent, caKeyContent)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-			slog.Warn("socket cookie", "cookie", socketCookie)
+	customCaMitm := &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: goproxy.TLSConfigFromCA(cert)}
+	var customAlwaysMitm goproxy.FuncHttpsHandler = func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+		return customCaMitm, host
+	}
 
-			localAddr := underlyingConn.LocalAddr().(*net.TCPAddr)
-			sourcePort := localAddr.Port
-			log.Printf("source port: %v", sourcePort)
+	// proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*$"))).
+	// 	HandleConnect(goproxy.AlwaysMitm)
+	proxy.OnRequest().HandleConnect(customAlwaysMitm)
 
-			// ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
-			// if err != nil {
-			// 	log.Printf("error getting host and port from source port: %v", err)
-			// }
+	// proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*:80$"))).
+	// 	HijackConnect(func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
+	// 		slog.Info("client type", "type", fmt.Sprintf("%T", client))
+	// 		defer func() {
+	// 			if e := recover(); e != nil {
+	// 				ctx.Logf("error connecting to remote: %v", e)
+	// 				_, err := client.Write([]byte("HTTP/1.1 500 Cannot reach destination\r\n\r\n"))
+	// 				if err != nil {
+	// 					ctx.Logf("error writing error response: %v", err)
+	// 				}
+	// 			}
+	// 			client.Close()
+	// 		}()
 
-			// req.URL.Scheme = "https"
-			// req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
-			// log.Printf("new host: %v", req.URL.Host)
+	// 		// panic("test")
 
-			clientBuf := bufio.NewReadWriter(bufio.NewReader(client), bufio.NewWriter(client))
+	// 		underlyingConn, ok := client.(dumbResponseWriter)
+	// 		if !ok {
+	// 			panic("client is not a dumbResponseWriter")
+	// 		}
+	// 		socketCookie, err := underlyingConn.SocketCookie()
+	// 		if err != nil {
+	// 			ctx.Logf("error getting socket cookie: %v", err)
+	// 		}
 
-			remote, err := connectDial(req.Context(), proxy, "tcp", req.URL.Host)
-			orPanic(err)
+	// 		slog.Warn("socket cookie", "cookie", socketCookie)
 
-			ctx.Logf("remote addr: %v", remote.RemoteAddr())
-			// if firewall.FirewallMethod == models.AllowList {
-			// 	remote.RemoteAddr()
-			// } else if firewall.FirewallMethod == models.BlockList {
+	// 		localAddr := underlyingConn.LocalAddr().(*net.TCPAddr)
+	// 		sourcePort := localAddr.Port
+	// 		log.Printf("source port: %v", sourcePort)
 
-			// }
+	// 		// ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
+	// 		// if err != nil {
+	// 		// 	log.Printf("error getting host and port from source port: %v", err)
+	// 		// }
 
-			remoteBuf := bufio.NewReadWriter(bufio.NewReader(remote), bufio.NewWriter(remote))
-			for {
-				req, err := http.ReadRequest(clientBuf.Reader)
-				orPanic(err)
-				orPanic(req.Write(remoteBuf))
-				orPanic(remoteBuf.Flush())
-				resp, err := http.ReadResponse(remoteBuf.Reader, req)
-				orPanic(err)
-				orPanic(resp.Write(clientBuf.Writer))
-				orPanic(clientBuf.Flush())
-			}
-		})
+	// 		// req.URL.Scheme = "https"
+	// 		// req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
+	// 		// log.Printf("new host: %v", req.URL.Host)
+
+	// 		clientBuf := bufio.NewReadWriter(bufio.NewReader(client), bufio.NewWriter(client))
+
+	// 		remote, err := connectDial(req.Context(), proxy, "tcp", req.URL.Host)
+	// 		orPanic(err)
+
+	// 		ctx.Logf("remote addr: %v", remote.RemoteAddr())
+	// 		// if firewall.FirewallMethod == models.AllowList {
+	// 		// 	remote.RemoteAddr()
+	// 		// } else if firewall.FirewallMethod == models.BlockList {
+
+	// 		// }
+
+	// 		remoteBuf := bufio.NewReadWriter(bufio.NewReader(remote), bufio.NewWriter(remote))
+	// 		for {
+	// 			req, err := http.ReadRequest(clientBuf.Reader)
+	// 			orPanic(err)
+	// 			orPanic(req.Write(remoteBuf))
+	// 			orPanic(remoteBuf.Flush())
+	// 			resp, err := http.ReadResponse(remoteBuf.Reader, req)
+	// 			orPanic(err)
+	// 			orPanic(resp.Write(clientBuf.Writer))
+	// 			orPanic(clientBuf.Flush())
+	// 		}
+	// 	})
 
 	proxy.NonproxyHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Host == "" {
