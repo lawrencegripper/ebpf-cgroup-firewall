@@ -64,6 +64,13 @@ func loadMkcertRootCA() (*tls.Certificate, error) {
 	return &parsedCert, nil
 }
 
+type Logger struct{}
+
+func (l *Logger) Printf(format string, v ...interface{}) {
+	output := fmt.Sprintf(format, v...)
+	slog.Info(output)
+}
+
 func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string) {
 	http_addr := ":6775"
 	https_addr := ":6776"
@@ -73,6 +80,8 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 	if proxy.Verbose {
 		log.Printf("Server starting up! - configured to listen on http interface %s and https interface %s", http_addr, https_addr)
 	}
+
+	proxy.Logger = &Logger{}
 
 	cert, err := loadMkcertRootCA()
 	if err != nil {
