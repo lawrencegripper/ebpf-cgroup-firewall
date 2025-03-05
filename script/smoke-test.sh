@@ -95,6 +95,18 @@ attach_firewall_test() {
     echo "$cmdOutput" | $indent_twice
 }
 
+open_fold "BlockList: Block https google. (Allow DNS)"
+
+    run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --max-time 1 https://google.com"
+    assert_exit_code 52 # http mitm proxy will close the connection
+    assert_output_contains "blocked"
+    assert_output_contains "http proxy blocked domain: google.com"
+    # TODO: Currently when using the `run` the http proxy is outside the cgroup so doesn't intercept DNS requests
+    # or there is some other thing broken here 
+    # assert_output_contains "Matched Domain Prefix: google.com"
+    
+close_fold
+
 
 open_fold "BlockList: Block google"
 
@@ -111,18 +123,6 @@ close_fold
 open_fold "BlockList: Block google. (Allow DNS)"
 
     run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --max-time 1 google.com"
-    assert_exit_code 52 # http mitm proxy will close the connection
-    assert_output_contains "blocked"
-    assert_output_contains "http proxy blocked domain: google.com"
-    # TODO: Currently when using the `run` the http proxy is outside the cgroup so doesn't intercept DNS requests
-    # or there is some other thing broken here 
-    # assert_output_contains "Matched Domain Prefix: google.com"
-    
-close_fold
-
-open_fold "BlockList: Block https google. (Allow DNS)"
-
-    run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --max-time 1 https://google.com"
     assert_exit_code 52 # http mitm proxy will close the connection
     assert_output_contains "blocked"
     assert_output_contains "http proxy blocked domain: google.com"

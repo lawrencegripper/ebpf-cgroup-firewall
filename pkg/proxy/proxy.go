@@ -52,6 +52,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 
 	proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*$"))).
 		HandleConnect(goproxy.AlwaysMitm)
+
 	proxy.OnRequest().
 		HijackConnect(func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
 			defer func() {
@@ -80,14 +81,14 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			sourcePort := localAddr.Port
 			log.Printf("source port: %v", sourcePort)
 
-			ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
-			if err != nil {
-				log.Printf("error getting host and port from source port: %v", err)
-			}
+			// ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
+			// if err != nil {
+			// 	log.Printf("error getting host and port from source port: %v", err)
+			// }
 
-			req.URL.Scheme = "https"
-			req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
-			log.Printf("new host: %v", req.URL.Host)
+			// req.URL.Scheme = "https"
+			// req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
+			// log.Printf("new host: %v", req.URL.Host)
 
 			clientBuf := bufio.NewReadWriter(bufio.NewReader(client), bufio.NewWriter(client))
 
