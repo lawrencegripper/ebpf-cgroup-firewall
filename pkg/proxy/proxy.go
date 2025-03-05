@@ -69,7 +69,7 @@ type Logger struct{}
 
 func (l *Logger) Printf(format string, v ...interface{}) {
 	output := fmt.Sprintf(format, v...)
-	slog.Debug(output)
+	slog.Debug("goproxy logs: " + output)
 }
 
 func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) {
