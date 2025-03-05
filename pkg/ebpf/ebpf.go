@@ -21,7 +21,6 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
-	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
 
 type AllowKind int
@@ -86,18 +85,34 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 	return blockedEventsCopy
 }
 
-func (e *DnsFirewall) HostAndPortFromSocketCookie(serverSocketCookie utils.SocketCookie) (string, int, error) {
+func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (string, int, error) {
 	maps := e.Objects.bpfMaps
 	// serverSocketCookie :=
 	// output := &map[string]string{}
-	slog.Warn("server cookie", "serverSocketCookie", serverSocketCookie)
+	// slog.Warn("server cookie", "serverSocketCookie", serverSocketCookie)
+
+	// slog.Warn("firewallIps")
+	// ip := uint32(16)
+	// iterateOvereBPFMap(maps.FirewallIpMap.Iterate(), ip)
 
 	slog.Warn("srcPortToSockClient")
+
 	iterateOvereBPFMap(maps.SrcPortToSockClient.Iterate())
-	slog.Warn("sockClientToOriginalDest")
-	iterateOvereBPFMap(maps.SockClientToOriginalDest.Iterate())
-	slog.Warn("sockServerToSockClient")
-	iterateOvereBPFMap(maps.SockServerToSockClient.Iterate())
+
+	clientSocketCookie := uint64(16)
+	err := maps.SrcPortToSockClient.Lookup(uint16(sourcePort), &clientSocketCookie)
+	if err != nil {
+		slog.Warn("srcPortToSockClient", "error", err)
+	}
+
+	slog.Warn("clientSocketCookie", "clientSocketCookie", clientSocketCookie)
+
+	// slog.Warn("sockClientToOriginalDest")
+	// dest := "" //TODO: Fix this up
+	// iterateOvereBPFMap(maps.SockClientToOriginalDest.Iterate(), dest)
+	// slog.Warn("sockServerToSockClient")
+	// clientCookie := uint64(16)
+	// iterateOvereBPFMap(maps.SockServerToSockClient.Iterate(), clientCookie)
 
 	// err := clientSocketCookie.Lookup(serverSocketCookie, output)
 	// if err != nil {
@@ -108,11 +123,11 @@ func (e *DnsFirewall) HostAndPortFromSocketCookie(serverSocketCookie utils.Socke
 }
 
 func iterateOvereBPFMap(iter *ebpf.MapIterator) {
-	key := uint64(16)
-	value := ""
+	key := uint16(16)
+	value := uint64(16)
 
 	for iter.Next(&key, &value) {
-		slog.Warn(fmt.Sprintf("key: %v, value: %v\n", key, value))
+		slog.Warn(fmt.Sprintf("key: %v, value: %d \n", key, value))
 	}
 	if err := iter.Err(); err != nil {
 		slog.Error("iterating over eBPF map", logger.SlogError(err))

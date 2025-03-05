@@ -66,8 +66,8 @@ struct
 {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(map_flags, BPF_F_NO_PREALLOC);
-    __type(key, __u64);
-    __type(value, __u32);
+    __type(key, __u16);
+    __type(value, __u64);
     __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } src_port_to_sock_client SEC(".maps");
 
@@ -208,18 +208,18 @@ int cg_sock_ops(struct bpf_sock_ops *ctx) {
     bpf_map_update_elem(&src_port_to_sock_client, &src_port, &cookie, 0);
   }
 
-  // Inbound connection estabilished (ie. Server receiving call)
-  // Our client program `curl example.com` has been redirected to our 
-  // proxy server
-  if (ctx->op == BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB) {
-    __u64 cookie = bpf_get_socket_cookie(ctx);
-    __u16 sender_port = ctx->remote_port;
+//   // Inbound connection estabilished (ie. Server receiving call)
+//   // Our client program `curl example.com` has been redirected to our 
+//   // proxy server
+//   if (ctx->op == BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB) {
+//     __u64 cookie = bpf_get_socket_cookie(ctx);
+//     __u16 sender_port = ctx->local_port;
     
-    __u64 *sock_client = bpf_map_lookup_elem(&src_port_to_sock_client, &sender_port);
-    if (sock_client) {
-      bpf_map_update_elem(&sock_server_to_sock_client, &cookie, &sock_client, 0);
-    }
-  }
+//     __u64 *sock_client = bpf_map_lookup_elem(&src_port_to_sock_client, &sender_port);
+//     if (sock_client) {
+//       bpf_map_update_elem(&sock_server_to_sock_client, &cookie, &sock_client, 0);
+//     }
+//   }
 
   return 0;
 }
