@@ -98,19 +98,32 @@ attach_firewall_test() {
 open_fold "AllowList: Allows https google"
 
     run_firewall_test "--allow-list google.com" "curl -s --max-time 1 https://google.com"
-    assert_exit_code 0 # http mitm proxy will close the connection
+    assert_exit_code 0
+    
+close_fold
+
+open_fold "AllowList: allow github.com/lawrencegripper"
+
+    run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl -s --output /dev/null --max-time 1 https://github.com/lawrencegripper"
+    assert_exit_code 0
+    
+close_fold
+
+open_fold "AllowList: allow github.com/lawrencegripper but call github.com/github"
+
+    run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl -s --fail-with-body --output /dev/null --max-time 1 https://github.com/github"
+    assert_exit_code 22
+    assert_output_contains "blocked"
+    assert_output_contains "http proxy blocked url not on allow list: https://github.com/lawrencegripper"
     
 close_fold
 
 open_fold "BlockList: Block https google. (Allow DNS)"
 
     run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 https://google.com"
-    assert_exit_code 22 # http mitm proxy will close the connection
+    assert_exit_code 22
     assert_output_contains "blocked"
     assert_output_contains "http proxy blocked domain: google.com"
-    # TODO: Currently when using the `run` the http proxy is outside the cgroup so doesn't intercept DNS requests
-    # or there is some other thing broken here 
-    # assert_output_contains "Matched Domain Prefix: google.com"
     
 close_fold
 
@@ -130,7 +143,7 @@ close_fold
 open_fold "BlockList: Block google. (Allow DNS)"
 
     run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 google.com"
-    assert_exit_code 22 # http mitm proxy will close the connection
+    assert_exit_code 22
     assert_output_contains "blocked"
     assert_output_contains "http proxy blocked domain: google.com"
     # TODO: Currently when using the `run` the http proxy is outside the cgroup so doesn't intercept DNS requests

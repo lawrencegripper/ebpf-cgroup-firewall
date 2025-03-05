@@ -71,7 +71,7 @@ func (l *Logger) Printf(format string, v ...interface{}) {
 	slog.Info(output)
 }
 
-func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string) {
+func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) {
 	http_addr := ":6775"
 	https_addr := ":6776"
 
@@ -98,15 +98,33 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 
 	// Blocking logic in the proxy
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		// First handle domain level blocking
 		for _, domain := range firewallDomains {
 			if firewall.FirewallMethod == models.AllowList {
-				if !strings.Contains(req.Host, domain) {
+				// WARNING: Suffix match here is key to avoid github.com.lawrence.com matching for github.com
+				if !strings.HasSuffix(req.Host, domain) {
 					log.Printf("http proxy blocked domain not on allow list: %v", domain)
 					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 				}
 			} else if firewall.FirewallMethod == models.BlockList {
-				if strings.Contains(req.Host, domain) {
+				if strings.HasSuffix(req.Host, domain) {
 					log.Printf("http proxy blocked domain: %v", domain)
+					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
+				}
+			}
+		}
+
+		// Look at basic url level blocking
+		for _, firewallUrl := range firewallUrls {
+			reqUrl := req.URL.String()
+			if firewall.FirewallMethod == models.AllowList {
+				if !strings.HasPrefix(reqUrl, firewallUrl) {
+					log.Printf("http proxy blocked url not on allow list: %v", firewallUrl)
+					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
+				}
+			} else if firewall.FirewallMethod == models.BlockList {
+				if strings.HasPrefix(reqUrl, firewallUrl) {
+					log.Printf("http proxy blocked url: %v", firewallUrl)
 					return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 				}
 			}

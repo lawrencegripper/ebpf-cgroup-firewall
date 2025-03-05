@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -102,7 +103,7 @@ func main() {
 		firewallList = blockList
 	}
 
-	firewallIps, firewallDomains := splitDomainAndIPListByType(firewallList)
+	firewallIps, firewallDomains, firewallUrls := splitDomainUrlOrIPListByType(firewallList)
 
 	// get a port for the DNS server
 	dnsPort, err := dns.FindUnusedPort()
@@ -177,7 +178,7 @@ func main() {
 	slog.Debug("DNS monitoring proxy started successfully")
 
 	// Start http proxy
-	proxy.Start(ebpfFirewall, dns, firewallDomains)
+	proxy.Start(ebpfFirewall, dns, firewallDomains, firewallUrls)
 
 	// If we're not attaching then we need to run the command in the cgroup
 	if attach {
@@ -218,9 +219,10 @@ func main() {
 	}
 }
 
-func splitDomainAndIPListByType(allowList []string) ([]string, []string) {
+func splitDomainUrlOrIPListByType(allowList []string) ([]string, []string, []string) {
 	var ips []string
 	var domains []string
+	var urls []string
 
 	for _, item := range allowList {
 		// Simple IP check - looks for dots and numbers
@@ -243,10 +245,26 @@ func splitDomainAndIPListByType(allowList []string) ([]string, []string) {
 				continue
 			}
 		}
+
+		// Is it a url?
+		// TODO: Can we do better detection?
+		if strings.Contains(item, "://") {
+			parsedUrl, err := url.Parse(item)
+			if err != nil {
+				slog.Error("Failed to parse URL", "url", item, logger.SlogError(err))
+				panic(err)
+			}
+			urls = append(urls, item)
+
+			domains = append(domains, parsedUrl.Host)
+			continue
+		}
+
+		// If not hen it's a domain
 		domains = append(domains, item)
 	}
 
-	return ips, domains
+	return ips, domains, urls
 }
 
 func GetCGroupForCurrentProcess() string {
