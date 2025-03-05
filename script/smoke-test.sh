@@ -7,6 +7,9 @@ set -eu
 indent_once="pr -to5"
 indent_twice="pr -to10"
 
+default_curl_args="-s --fail-with-body --output /dev/null --max-time 1"
+slow_curl_args="-s --fail-with-body --output /dev/null --max-time 5"
+
 assert_exit_code() {
     local expected=$1
     local actual=$exitCode
@@ -81,6 +84,9 @@ attach_firewall_test() {
         exit 1
     fi
 
+    # give the proxy some time to start 
+    sleep 1
+
     set +e
     $cmd
     exitCode=$?
@@ -97,21 +103,21 @@ attach_firewall_test() {
 
 open_fold "AllowList: Allows https google"
 
-    run_firewall_test "--allow-list google.com" "curl -s --max-time 1 https://google.com"
+    run_firewall_test "--allow-list google.com" "curl $default_curl_args https://google.com"
     assert_exit_code 0
     
 close_fold
 
 open_fold "AllowList: allow github.com/lawrencegripper"
 
-    run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl -s --output /dev/null --max-time 1 https://github.com/lawrencegripper"
+    run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl $default_curl_args https://github.com/lawrencegripper"
     assert_exit_code 0
     
 close_fold
 
 open_fold "AllowList: allow github.com/lawrencegripper but call github.com/github"
 
-    run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl -s --fail-with-body --output /dev/null --max-time 1 https://github.com/github"
+    run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl $default_curl_args https://github.com/github"
     assert_exit_code 22
     assert_output_contains "blocked"
     assert_output_contains "http proxy blocked url not on allow list: https://github.com/lawrencegripper"
@@ -130,10 +136,10 @@ close_fold
 
 open_fold "BlockList: Block google"
 
-    run_firewall_test "--block-list google.com" "curl -s --max-time 1 google.com"
+    run_firewall_test "--block-list google.com" "curl $default_curl_args google.com"
     assert_exit_code 6
     # 2025/01/05 21:16:27 WARN DNS BLOCKED reason=FromDNSRequest explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com. pid=258400 cmd="curl -s --max-time 1 google.com " firewallMethod=blocklist
-    assert_output_contains "curl -s --max-time 1 google.com"
+    assert_output_contains "curl $default_curl_args google.com"
     assert_output_contains "DNS BLOCKED"
     assert_output_contains "Matched Domain Prefix: google.com"
     assert_output_contains "blockedAt=dns"
@@ -154,30 +160,30 @@ close_fold
 
 open_fold "AllowList: curl raw IP without dns request blocked"
 
-    run_firewall_test "--debug --allow-list bing.com " "curl --fail-with-body --max-time 1 http://1.1.1.1"
+    run_firewall_test "--debug --allow-list bing.com " "curl -s --fail-with-body --max-time 1 http://1.1.1.1"
     assert_exit_code 22
 
 close_fold
 
 open_fold "BlockList: Block google. Bing succeeds"
 
-    run_firewall_test "--block-list google.com" "curl -s --max-time 1 bing.com"
+    run_firewall_test "--block-list google.com" "curl $default_curl_args bing.com"
     assert_exit_code 0
 
 close_fold
 
 open_fold "AllowList: Allow google. Block everything else"
 
-    run_firewall_test "--allow-list google.com" "curl -s --max-time 1 google.com"
+    run_firewall_test "--allow-list google.com" "curl $default_curl_args google.com"
     assert_exit_code 0
 
 close_fold
 
 open_fold "AllowList: Block bing when only google allowed"
 
-    run_firewall_test "--allow-list google.com" "curl -s --max-time 1 bing.com"
+    run_firewall_test "--allow-list google.com" "curl $default_curl_args bing.com"
     assert_exit_code 6
-    assert_output_contains "curl -s --max-time 1 bing.com"
+    assert_output_contains "curl $default_curl_args bing.com"
     assert_output_contains "DNS BLOCKED"
     assert_output_contains "Domain doesn't match any allowlist prefixes"
     assert_output_contains "blockedAt=dns"
@@ -186,7 +192,7 @@ close_fold
 
 open_fold "AllowList: Block bing when only google allowed (allow dns resolution)"
 
-    run_firewall_test "--allow-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 bing.com"
+    run_firewall_test "--allow-list google.com --allow-dns-request" "curl $default_curl_args bing.com"
     assert_exit_code 22
     assert_output_contains "blocked"
 
@@ -197,7 +203,7 @@ open_fold "LogFile: Test --log-file option"
     rm -f /tmp/firewall_test.log # Clear log file if it exists
 
     log_file="/tmp/firewall_test.log"
-    run_firewall_test "--block-list google.com --log-file $log_file" "curl -s --max-time 1 google.com"
+    run_firewall_test "--block-list google.com --log-file $log_file" "curl $default_curl_args google.com"
     assert_exit_code 6
 
     echo -e "\033[0;34m⬇️ Log File Output:\033[0m" | $indent_once
@@ -209,7 +215,7 @@ close_fold
 
 open_fold "Attach: Curl google when blocked"
 
-    attach_firewall_test "--debug --block-list google.com " "curl --max-time 5 google.com"
+    attach_firewall_test "--debug --block-list google.com " "curl $default_curl_args google.com"
     assert_exit_code 6
     assert_output_contains "Matched Domain Prefix: google.com"
 
@@ -218,28 +224,28 @@ close_fold
 
 open_fold "Attach: Curl google when bing blocked"
 
-    attach_firewall_test "--debug --block-list bing.com " "curl --parallel --parallel-immediate --max-time 5 google.com example.com"
+    attach_firewall_test "--debug --block-list bing.com " "curl $slow_curl_args --max-time 5 google.com"
     assert_exit_code 0
 
 close_fold
 
 open_fold "Attach: Curl http://example.com when bing blocked"
 
-    attach_firewall_test "--debug --block-list bing.com " "curl --max-time 5 http://example.com/"
+    attach_firewall_test "--debug --block-list bing.com " "curl $slow_curl_args http://example.com/"
     assert_exit_code 0
 
 close_fold
 
 open_fold "Attach: Curl http://bing.com when bing blocked"
 
-    attach_firewall_test "--debug --allow-dns-request --block-list bing.com " "curl --fail-with-body --max-time 5 http://bing.com/"
+    attach_firewall_test "--debug --allow-dns-request --block-list bing.com " "curl $slow_curl_args http://bing.com/"
     assert_exit_code 22
 
 close_fold
 
 open_fold "Attach: curl raw IP without dns request blocked"
 
-    attach_firewall_test "--debug --allow-list bing.com " "curl --fail-with-body --max-time 5 http://1.1.1.1"
+    attach_firewall_test "--debug --allow-list bing.com " "curl $slow_curl_args http://1.1.1.1"
     assert_exit_code 22
 
 close_fold
