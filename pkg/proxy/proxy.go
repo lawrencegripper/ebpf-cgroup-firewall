@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/elazarl/goproxy"
@@ -49,6 +50,8 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 		log.Printf("Server starting up! - configured to listen on http interface %s and https interface %s", http_addr, https_addr)
 	}
 
+	proxy.OnRequest(goproxy.ReqHostMatches(regexp.MustCompile("^.*$"))).
+		HandleConnect(goproxy.AlwaysMitm)
 	proxy.OnRequest().
 		HijackConnect(func(req *http.Request, client net.Conn, ctx *goproxy.ProxyCtx) {
 			defer func() {
@@ -72,6 +75,19 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			}
 
 			slog.Warn("socket cookie", "cookie", socketCookie)
+
+			localAddr := underlyingConn.LocalAddr().(*net.TCPAddr)
+			sourcePort := localAddr.Port
+			log.Printf("source port: %v", sourcePort)
+
+			ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
+			if err != nil {
+				log.Printf("error getting host and port from source port: %v", err)
+			}
+
+			req.URL.Scheme = "https"
+			req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
+			log.Printf("new host: %v", req.URL.Host)
 
 			clientBuf := bufio.NewReadWriter(bufio.NewReader(client), bufio.NewWriter(client))
 
@@ -210,6 +226,10 @@ func connectDial(ctx context.Context, proxy *goproxy.ProxyHttpServer, network, a
 
 type dumbResponseWriter struct {
 	net.Conn
+}
+
+func (dumb dumbResponseWriter) LocalAddr() net.Addr {
+	return dumb.Conn.RemoteAddr()
 }
 
 func (dumb dumbResponseWriter) SocketCookie() (utils.SocketCookie, error) {
