@@ -31,6 +31,7 @@ func IPToInt(val string) uint32 {
 	return binary.LittleEndian.Uint32(ip)
 }
 
+// TODO: Think this will fail on arm as it assumes little endian
 func IntToIP(val uint32) net.IP {
 	ip := make(net.IP, 4)
 	binary.LittleEndian.PutUint32(ip, val)

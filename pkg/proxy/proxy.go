@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/elazarl/goproxy"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
@@ -33,7 +34,7 @@ func GetConn(r *http.Request) net.Conn {
 	return r.Context().Value(ConnContextKey).(net.Conn)
 }
 
-func Start(firewall *ebpf.DnsFirewall) {
+func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string) {
 	http_addr := ":6775"
 	// https_addr := flag.String("httpsaddr", ":3128", "proxy https listen address")
 
@@ -109,17 +110,8 @@ func Start(firewall *ebpf.DnsFirewall) {
 			fmt.Fprintln(w, "Cannot handle requests without Host header, e.g., HTTP 1.0")
 			return
 		}
-		// Pull the request destination from the eBFP socket cookie and ebfp hash
-		// log.Printf("nonproxy request: %v", req.URL.String())
-		// log.Printf("nonproxy request: %v", req.Host)
-		// req.URL.Scheme = "http"
-		// req.URL.Host = req.Host
 
 		conn := GetConn(req)
-		// socketCookie, err := utils.GetSocketCookie(conn)
-		// if err != nil {
-		// 	log.Printf("error getting socket cookie: %v", err)
-		// }
 
 		localAddr := conn.RemoteAddr().(*net.TCPAddr)
 		sourcePort := localAddr.Port
@@ -130,18 +122,25 @@ func Start(firewall *ebpf.DnsFirewall) {
 			log.Printf("error getting host and port from source port: %v", err)
 		}
 
+		originalHost := req.URL.Host
+		log.Printf("original host: %v", originalHost)
+
+		// for _, domain := range firewallDomains {
+		// 	if firewall.FirewallMethod == models.AllowList {
+		// 		if !strings.Contains(originalHost, domain) {
+		// 			w.WriteHeader(http.StatusForbidden)
+		// 		}
+		// 	} else if firewall.FirewallMethod == models.BlockList {
+		// 		if strings.Contains(originalHost, domain) {
+		// 			w.WriteHeader(http.StatusForbidden)
+		// 		}
+		// 	}
+		// }
+
 		req.URL.Scheme = "http"
 		req.URL.Host = fmt.Sprintf("%s:%d", ip, port)
+		log.Printf("new host: %v", req.URL.Host)
 
-		// log.Println(conn.RemoteAddr())
-
-		// log.Printf("server socket cookie: %v", socketCookie)
-		// host, port, err := firewall.HostAndPortFromSocketCookie(socketCookie)
-		// if err != nil {
-		// 	log.Printf("error getting host and port from socket cookie: %v", err)
-		// }
-		// log.Printf("host: %v, port: %v", host, port)
-		// panic(1)
 		proxy.ServeHTTP(w, req)
 	})
 

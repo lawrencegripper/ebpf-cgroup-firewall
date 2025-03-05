@@ -85,7 +85,7 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 	return blockedEventsCopy
 }
 
-func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (string, int, error) {
+func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, error) {
 	maps := e.Objects.bpfMaps
 	// serverSocketCookie :=
 	// output := &map[string]string{}
@@ -122,7 +122,7 @@ func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (string, int, er
 		slog.Warn("sockClientToOriginalPort", "error", err)
 	}
 
-	return string(originalIp), int(originalPort), nil
+	return originalIp, int(originalPort), nil
 }
 
 func iterateOvereBPFMap(iter *ebpf.MapIterator) {

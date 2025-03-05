@@ -141,8 +141,6 @@ func main() {
 		}
 	}
 
-	proxy.Start(ebpfFirewall)
-
 	dns, err := dns.StartDNSMonitoringProxy(
 		dnsPort,
 		firewallDomains,
@@ -177,6 +175,9 @@ func main() {
 	}
 
 	slog.Debug("DNS monitoring proxy started successfully")
+
+	// Start http proxy
+	proxy.Start(ebpfFirewall, dns, firewallDomains)
 
 	// If we're not attaching then we need to run the command in the cgroup
 	if attach {
