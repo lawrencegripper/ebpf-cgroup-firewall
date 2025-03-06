@@ -255,13 +255,17 @@ func splitDomainUrlOrIPListByType(allowList []string) ([]string, []string, []str
 				panic(err)
 			}
 			urls = append(urls, item)
-
+			// If a url is enabled enable that domain
 			domains = append(domains, parsedUrl.Host)
 			continue
 		}
 
 		// If not hen it's a domain
 		domains = append(domains, item)
+		// If a domain is added automatically enable all urls under that domain on http and https
+		// TODO: Document this logic
+		urls = append(urls, fmt.Sprintf("http://%s", item))
+		urls = append(urls, fmt.Sprintf("https://%s", item))
 	}
 
 	return ips, domains, urls

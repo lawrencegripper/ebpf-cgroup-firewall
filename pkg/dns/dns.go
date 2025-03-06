@@ -35,6 +35,16 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.Dn
 	}
 	downstreamServerAddr := config.Servers[0] + ":" + config.Port
 	slog.Debug("Using downstream DNS resolver", "address", downstreamServerAddr)
+	if firewall.FirewallMethod == models.AllowList {
+		err := firewall.AddIPToFirewall(config.Servers[0], &ebpf.Reason{
+			Kind:    ebpf.FromDnsRequest,
+			Comment: "when configured as allow list ensure we can call downstream dns server",
+		})
+		if err != nil {
+			slog.Error("Failed to add downstream dns server to allow list", logger.SlogError(err))
+			return nil, fmt.Errorf("failed to add downstream dns server to allow list: %w", err)
+		}
+	}
 
 	serverHandler := &blockingDNSHandler{
 		firewallDomains:           domains,
@@ -228,7 +238,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if err != nil {
 			slog.Warn("Failed to resolve from downstream", logger.SlogError(err), "domain", q.Name, "downstream server", b.DownstreamServerAddr)
 			m.Rcode = dns.RcodeServerFailure
-			panic(err)
+			return
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 
