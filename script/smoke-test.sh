@@ -101,6 +101,27 @@ attach_firewall_test() {
     echo "$cmdOutput" | $indent_twice
 }
 
+open_fold "AllowList: Non-http calls to smtp.google.com:25 when google.com is allowed"
+
+    run_firewall_test "--allow-list google.com" "nc -zv -w 5 smtp.google.com 25"
+    assert_exit_code 0
+    
+close_fold
+
+open_fold "AllowList: Non-http calls to smtp.google.com:25 when only bing.com is allowed"
+
+    run_firewall_test "--allow-list bing.com" "nc -zv -w 5 smtp.google.com 25"
+    assert_exit_code 2
+    
+close_fold
+
+open_fold "AllowList: Non-http calls to smtp.google.com:25 when only bing.com is allowed (Allow DNS)"
+
+    run_firewall_test "--allow-list bing.com --allow-dns-request" "nc -zv -w 1 smtp.google.com 25"
+    assert_exit_code 1
+    
+close_fold
+
 open_fold "AllowList: Allows https google"
 
     run_firewall_test "--allow-list google.com" "curl $default_curl_args https://google.com"

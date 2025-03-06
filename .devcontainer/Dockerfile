@@ -12,5 +12,8 @@ RUN curl -JLO "https://dl.filippo.io/mkcert/latest?for=linux/amd64" && \
     cp mkcert-v*-linux-amd64 /usr/local/bin/mkcert && \
     mkcert -install 
 
+# Install netcat and curl which we need for smoke tests
+RUN apt-get update && apt-get install -y netcat curl
+
 # Avoid git safety messages on codespace build
 RUN git config --global --add safe.directory '*'
