@@ -46,18 +46,25 @@ func (r *Reason) KindHumanReadable() string {
 }
 
 type DomainList struct {
-	Domains []string
+	Domains map[string]bool
 }
 
 func (d *DomainList) AddDomain(domain string) {
-	d.Domains = append(d.Domains, domain)
+	if d.Domains == nil {
+		d.Domains = make(map[string]bool)
+	}
+	d.Domains[domain] = true
 }
 
 func (d *DomainList) String() string {
 	if d == nil || d.Domains == nil {
 		return "No Domains"
 	}
-	return strings.Join(d.Domains, ",")
+	keys := make([]string, 0, len(d.Domains))
+	for k := range d.Domains {
+		keys = append(keys, k)
+	}
+	return strings.Join(keys, ",")
 }
 
 type DnsFirewall struct {
@@ -155,6 +162,16 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 	if e.FirewallIPsWithReason == nil {
 		e.FirewallIPsWithReason = make(map[string]*Reason)
 	}
+
+	// TODO: We have a concurrent map race condition here
+	// ▼ Parallel Test (Allow): Multiple HTTPS requests
+	// 	⬇️ Command:
+	// 	curl -s --fail-with-body --output /dev/null --max-time 5 --parallel --parallel-immediate --parallel-max 10 https://google.com https://bing.com https://github.com/lawrencegripper
+	// fatal error: concurrent map writes
+
+	// goroutine 1540 [running]:
+	// github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf.(*DnsFirewall).AddIPToFirewall(0xc000292510, {0xc00020aaa0, 0xd}, 0xc0000122b8)
+	//   /workspaces/ebpf-cgroup-firewall/pkg/ebpf/ebpf.go:159 +0x29c
 
 	e.FirewallIPsWithReason[ip] = reason
 
