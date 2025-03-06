@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/elazarl/goproxy"
@@ -32,13 +33,18 @@ type contextKey struct {
 
 var ConnContextKey = &contextKey{"http-conn"}
 
+var TLSSourcePortToConn = make(map[int]net.Conn)
+
 func SaveConnInContext(ctx context.Context, c net.Conn) context.Context {
 	slog.Debug("SaveConnInContext", slog.String("key", ConnContextKey.key), slog.Any("conn", c), slog.Any("ctx", ctx))
 	return context.WithValue(ctx, ConnContextKey, c)
 }
-func GetConnFromContext(r *http.Request) net.Conn {
+func GetConnFromContext(r *http.Request) (net.Conn, error) {
 	slog.Debug("GetConn", slog.String("key", ConnContextKey.key), slog.Any("conn", r.Context().Value(ConnContextKey)), slog.Any("ctx", r.Context()))
-	return r.Context().Value(ConnContextKey).(net.Conn)
+	if conn, ok := r.Context().Value(ConnContextKey).(net.Conn); ok {
+		return conn, nil
+	}
+	return nil, fmt.Errorf("no connection found in context")
 }
 
 // Load the mkcert root CA certificate and key
@@ -102,7 +108,18 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 
 	// Blocking logic in the proxy
 	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		slog.Info("HTTP proxy handling request", slog.String("host", req.Host), slog.String("url", req.URL.String()), slog.String("method", req.Method))
+		pid := getPidFromContextOrSrcPort(req, firewall)
+		// Ensure TLSSourcePortToConn is cleaned up when we're done with it
+		// so it doesn't grow indefinitely
+		defer clearSourcePortToConnMap(req)
+
+		slog.Info(
+			"HTTP proxy handling request",
+			slog.Int("pid", pid),
+			slog.String("host", req.Host),
+			slog.String("url", req.URL.String()),
+			slog.String("method", req.Method),
+		)
 
 		// First handle domain level blocking
 		for _, domain := range firewallDomains {
@@ -116,7 +133,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 						"blockedAt", "http",
 						"domain", domain,
 						// TODO: Pid tracking in http proxy
-						"pid", getPidFromConn(GetConnFromContext(ctx.Req), firewall),
+						"pid", pid,
 						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
 						"firewallMethod", firewall.FirewallMethod.String(),
 					)
@@ -133,8 +150,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 						"blocked", true,
 						"blockedAt", "http",
 						"domain", domain,
-						// TODO: Pid tracking in http proxy
-						// "pid", getPidFromConn(GetConnFromContext(ctx.Req), firewall),
+						"pid", pid,
 						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
 						"firewallMethod", firewall.FirewallMethod.String(),
 					)
@@ -155,7 +171,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 						"blockedAt", "http",
 						"url", firewallUrl,
 						// TODO: Pid tracking in http proxy
-						// "pid", getPidFromConn(GetConnFromContext(ctx.Req), firewall),
+						"pid", pid,
 						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
 						"firewallMethod", firewall.FirewallMethod.String(),
 					)
@@ -170,7 +186,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 						"blockedAt", "http",
 						"url", firewallUrl,
 						// TODO: Pid tracking in http proxy
-						"pid", getPidFromConn(GetConnFromContext(ctx.Req), firewall),
+						"pid", pid,
 						// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
 						"firewallMethod", firewall.FirewallMethod.String(),
 					)
@@ -189,8 +205,13 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			return
 		}
 
-		conn := GetConnFromContext(req)
-		_, port := getOriginalIpAndPortFromConn(conn, firewall)
+		conn, err := GetConnFromContext(req)
+		port := 80
+		if err != nil {
+			slog.Error("Error getting conn from context", logger.SlogError(err))
+		} else {
+			_, port = getOriginalIpAndPortFromConn(conn, firewall)
+		}
 
 		originalHost := req.Host
 		slog.Debug("original host and port", slog.String("host", originalHost), slog.Int("port", port))
@@ -250,6 +271,11 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 					Header:     make(http.Header),
 					RemoteAddr: c.RemoteAddr().String(),
 				}
+
+				// TODO: Hack around tracking conn for tls as transparent proxy loses ctx between requests
+				sourcePort := sourcePortFromConn(tlsConn.Conn)
+				TLSSourcePortToConn[sourcePort] = tlsConn.Conn
+
 				ctx := context.Background()
 				connectReq = connectReq.WithContext(SaveConnInContext(ctx, tlsConn.Conn))
 				resp := dumbResponseWriter{tlsConn}
@@ -259,7 +285,56 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 	}()
 }
 
+// getPidFromContextOrSrcPort is a helper method to get the pid from the request
+// In the case of HTTP requests the conn is appended using the SaveConnInContext method
+// so we can get it from there
+// In the case of transparent HTTPS requests the ctx is lost along the way
+// instead we use the source port to look up the conn in the TLSSourcePortToConn map
+// TODO: Unbounded growth in this map over time
+func getPidFromContextOrSrcPort(req *http.Request, firewall *ebpf.DnsFirewall) int {
+	conn, err := GetConnFromContext(req)
+	pid := -1
+	if err != nil {
+		slog.Error("Error getting conn from context", logger.SlogError(err))
+	}
+
+	if conn == nil {
+		sourcePort, err := getSourcePortFromReq(req)
+		if err != nil {
+			slog.Error("Error converting source port to int", logger.SlogError(err))
+		} else {
+			conn = TLSSourcePortToConn[sourcePort]
+		}
+	}
+
+	if conn != nil {
+		pid = getPidFromConn(conn, firewall)
+	}
+	return pid
+}
+
+// getSourcePortFromReq is a helper method to get the source port from the request
+func getSourcePortFromReq(req *http.Request) (int, error) {
+	sourcePortString := strings.Split(req.RemoteAddr, ":")[1]
+	sourcePort, err := strconv.Atoi(sourcePortString)
+	return sourcePort, err
+}
+
+// clearSourcePortToConnMap is a helper method to remove the conn from the
+// TLSSourcePortToConn map once we no longer need it
+func clearSourcePortToConnMap(req *http.Request) {
+	sourcePort, err := getSourcePortFromReq(req)
+	if err != nil {
+		slog.Error("Error converting source port to int", logger.SlogError(err))
+	} else {
+		delete(TLSSourcePortToConn, sourcePort)
+	}
+}
+
 func getPidFromConn(conn net.Conn, firewall *ebpf.DnsFirewall) int {
+	if conn == nil {
+		return -1
+	}
 	sourcePort := sourcePortFromConn(conn)
 	pid, err := firewall.PidFromSrcPort(sourcePort)
 	if err != nil {
