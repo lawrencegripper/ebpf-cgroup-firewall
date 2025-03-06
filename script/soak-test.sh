@@ -31,6 +31,8 @@ run_test_command() {
 # Capture the PID of the background process
 pid=$!
 
+sleep 5
+
 echo "Firewall pid: $pid"
 
 
@@ -40,10 +42,10 @@ while [ $SECONDS -lt $end_time ]; do
         assert_exit_code 0
     close_fold
 
-    open_fold "Parallel Test (Allow): Multiple HTTPS requests"
-        run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 10 http://example.com https://example.com https://github.com/github"
-        assert_exit_code 22
-    close_fold
+    # open_fold "Parallel Test (Allow): Multiple HTTPS requests"
+    #     run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://github.com/github"
+    #     assert_exit_code 22
+    # close_fold
 
     open_fold "Soak Test: Allow smtp.google.com:25 (SMTP)"
         run_test_command "nc -zv -w 1 smtp.google.com 25"

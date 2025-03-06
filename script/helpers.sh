@@ -86,7 +86,7 @@ attach_firewall_test() {
     sleep 1
 
     set +e
-    $cmd
+    eval $cmd
     exitCode=$?
     set -e
 
