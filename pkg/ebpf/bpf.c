@@ -286,7 +286,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     __u64 socketCookie = bpf_get_socket_cookie(skb);
     __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
 
-    bool (pid ? *pid : -1) == const_proxy_pid;
+    bool isFromProxyPid = (pid ? *pid : -1) == const_proxy_pid;
     if (isFromProxyPid) {
         // Allow the ebpf-firewall process to have full outbound access
         return EGRESS_ALLOW_PACKET;
