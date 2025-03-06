@@ -190,8 +190,12 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 		}
 
-		if !b.allowDNSRequestForBlocked {
-			if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.AllowList {
+		requestIsNotAllowed := false
+
+		if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.AllowList {
+			if b.allowDNSRequestForBlocked {
+				requestIsNotAllowed = true
+			} else {
 				m.Rcode = dns.RcodeRefused
 				if err := w.WriteMsg(m); err != nil {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
@@ -210,8 +214,12 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				)
 				return
 			}
+		}
 
-			if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.BlockList {
+		if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.BlockList {
+			if b.allowDNSRequestForBlocked {
+				requestIsNotAllowed = true
+			} else {
 				m.Rcode = dns.RcodeRefused
 				if err := w.WriteMsg(m); err != nil {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
@@ -252,7 +260,8 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.LogOnly {
 			// Do nothing
 		} else if domainMatchedFirewallDomains {
-			if b.dnsFirewall != nil {
+			//                          👇 Don't add the ip if we're allowing dns requests for blocked stuff
+			if b.dnsFirewall != nil && !requestIsNotAllowed {
 				// If it did match add the IPs to the firewall ip list
 				// the matching already decided on the firewall method (allow, block)
 				for _, answer := range resp.Answer {
