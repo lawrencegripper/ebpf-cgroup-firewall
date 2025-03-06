@@ -4,6 +4,7 @@
 #include <linux/bpf.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
+#include <netinet/tcp.h>
 #include <string.h>
 #include <linux/in.h>
 #include <linux/in6.h>
@@ -25,13 +26,19 @@ struct event
     __u32 pid;
     __u16 port;
     bool allowed;
-    __be32 ip;
-    __be32 originalIp;
-    bool isDns;
+    __u32 ip;
+    __u32 originalIp;
+    __u16 byPassType;
     __u16 dnsTransactionId;
     bool pidResolved;
+    bool hasBeenRedirected;
 };
 struct event *unused __attribute__((unused));
+
+const __u16 DNS_PROXY_PACKET_BYPASS_TYPE = 1;
+const __u16 DNS_REDIRECT_TYPE = 11;
+const __u16 HTTP_PROXY_PACKET_BYPASS_TYPE = 2;
+const __u16 HTTP_REDIRECT_TYPE = 22;
 
 // Force emitting struct event into the ELF.
 // struct event *unused __attribute__((unused));
@@ -116,7 +123,14 @@ volatile const __u32 const_dns_proxy_port;
     It prevents a circular dependency where the DNS proxy is trying to resolve the DNS query with the upstream
     server.
 */
-volatile const __u32 const_dns_proxy_pid;
+volatile const __u32 const_proxy_pid;
+
+volatile const __u16 const_http_proxy_port = 6775;
+volatile const __u16 const_https_proxy_port = 6776;
+
+// volatile const __u32 const_;
+// volatile const __u32 const_dns_proxy_pid;
+
 
 /* Firewall mode - This is set by the go code when loading the eBPF so we can run in firewall mode
  0 = allow all outbound - logOnly mode
@@ -128,6 +142,10 @@ volatile const __u16 const_firewall_mode;
 const __u16 FIREWALL_MODE_LOG_ONLY = 0;
 const __u16 FIREWALL_MODE_ALLOW_LIST = 1;
 const __u16 FIREWALL_MODE_BLOCK_LIST = 2;
+// This is to help with reability only
+const bool EGRESS_ALLOW_PACKET = 1;
+const bool EGRESS_DENY_PACKET = 1;
+const __u32 ADDRESS_LOCALHOST_NETBYTEORDER = bpf_htonl(0x7f000001);
 
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx)
@@ -141,6 +159,12 @@ int connect4(struct bpf_sock_addr *ctx)
 
     bool didRedirect = false;
 
+    bool isFromProxyPid = (bpf_get_current_pid_tgid() >> 32) == const_proxy_pid;
+    if (isFromProxyPid) {
+        // Allow the ebpf-firewall process out with no redirects
+        return 1;
+    }
+
     // TODO: Store this in host byte order too
     __be32 original_ip = ctx->user_ip4;
     // Convert to host byte order from network byte order
@@ -148,7 +172,7 @@ int connect4(struct bpf_sock_addr *ctx)
 
     // TODO: This shoul detect if the packet shape is HTTPish rather than relying on ports
     bool isHttpOrHttpsPort = ctx->user_port == bpf_htons(80) || ctx->user_port == bpf_htons(443);
-    if (isHttpOrHttpsPort && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)
+    if (isHttpOrHttpsPort)
     {
         didRedirect = true;
         // /* Store the original destination so we can map it back when a response is received */
@@ -160,7 +184,7 @@ int connect4(struct bpf_sock_addr *ctx)
         // orig->port = ctx->user_port;
 
         /* This is the hexadecimal representation of 127.0.0.1 address */
-        ctx->user_ip4 = bpf_htonl(0x7f000001);
+        ctx->user_ip4 = ADDRESS_LOCALHOST_NETBYTEORDER;
         
         // TODO: Determine if the connection is https and send by taking a look at it
         // rather than relying on ports
@@ -171,15 +195,24 @@ int connect4(struct bpf_sock_addr *ctx)
         if (ctx->user_port == bpf_htons(443)) {
             ctx->user_port = bpf_htons(6776);
         }
-    }
 
-    /* For DNS Query (*:53) rewire service to backend 127.0.0.1:8853. */
-    if (ctx->user_port == bpf_htons(53) && (bpf_get_current_pid_tgid() >> 32) != const_dns_proxy_pid)
-    {
+        struct event info = {
+            .pid = pid,
+            .pidResolved = true,
+            .port = ctx->user_port,
+            .allowed = true,
+            .ip = ctx->user_ip4,
+            .originalIp = orig->addr,
+            .byPassType = HTTP_REDIRECT_TYPE,
+        };
+
+        bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+    } else if (ctx->user_port == bpf_htons(53)) {
+        /* For DNS Query (*:53) rewire service to backend 127.0.0.1:8853. */
         didRedirect = true;
 
         /* This is the hexadecimal representation of 127.0.0.1 address */
-        ctx->user_ip4 = bpf_htonl(0x7f000001);
+        ctx->user_ip4 = ADDRESS_LOCALHOST_NETBYTEORDER;
         ctx->user_port = bpf_htons(const_dns_proxy_port);
 
         struct event info = {
@@ -189,7 +222,7 @@ int connect4(struct bpf_sock_addr *ctx)
             .allowed = true,
             .ip = ctx->user_ip4,
             .originalIp = orig->addr,
-            .isDns = true,
+            .byPassType = DNS_REDIRECT_TYPE,
         };
 
         bpf_ringbuf_output(&events, &info, sizeof(info), 0);
@@ -242,6 +275,7 @@ int cg_sock_ops(struct bpf_sock_ops *ctx) {
   return 0;
 }
 
+
 SEC("cgroup_skb/egress")
 int cgroup_skb_egress(struct __sk_buff *skb)
 {
@@ -252,19 +286,40 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     __u64 socketCookie = bpf_get_socket_cookie(skb);
     __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
 
+    bool isFromProxyPid = (bpf_get_current_pid_tgid() >> 32) == const_proxy_pid;
+    if (isFromProxyPid) {
+        // Allow the ebpf-firewall process to have full outbound access
+        return EGRESS_ALLOW_PACKET;
+    }
+
+    __u32 destination_ip = iph.daddr;
+    __u32 *original_ip_ptr = bpf_map_lookup_elem(&sock_client_to_original_ip, &socketCookie);
+    if (original_ip_ptr)
+    {
+        // We did a redirect, so for the purposes of the firewall check we'll
+        // consider the original ip that was being targetted
+        destination_ip = *original_ip_ptr;
+    }
+    __u32 original_ip = original_ip_ptr ? *original_ip_ptr : 0;
+    bool isRedirectedByToOurProxy = false;
 
     /* 
     * Intercept UDP requests to the DNS Proxy to parse out the TransactionID
     * this allows us to correlate the DNS request to the PID that made it in the userspace DNS server.
     */
+    __u16 port = 0;
+
     if (iph.protocol == IPPROTO_UDP)
     {
         struct udphdr udp;
         if (bpf_skb_load_bytes(skb, sizeof(struct iphdr), &udp, sizeof(struct udphdr)) < 0) {
-            return 1;
+            // TODO: Think this is an error condition, we should fail closed
+            return EGRESS_DENY_PACKET;
         }
 
-        bool isProxiedDnsRequest = udp.uh_dport == bpf_htons(const_dns_proxy_port);
+        port = udp.uh_dport;
+
+        bool isProxiedDnsRequest = udp.uh_dport == bpf_htons(const_dns_proxy_port) && iph.daddr == ADDRESS_LOCALHOST_NETBYTEORDER;
         if (isProxiedDnsRequest)
         {
             __u16 skbReadOffset = sizeof(struct iphdr) + sizeof(struct udphdr);
@@ -273,19 +328,45 @@ int cgroup_skb_egress(struct __sk_buff *skb)
             struct event info = {
                 .port = bpf_ntohs(udp.uh_dport),
                 .allowed = true,
-                .ip = iph.daddr,
+                .ip = bpf_ntohl(iph.daddr),
                 .pid = pid ? *pid : 0,
                 .pidResolved = pid ? true : false,
-                .originalIp = iph.daddr,
-                .isDns = true,
+                .originalIp =  bpf_ntohl(original_ip),
+                .hasBeenRedirected = isRedirectedByToOurProxy,
+                .byPassType = DNS_PROXY_PACKET_BYPASS_TYPE,
                 .dnsTransactionId = dnsTransactionId,
             };
 
             bpf_ringbuf_output(&events, &info, sizeof(info), 0);
             
-            return 1;
+            return EGRESS_ALLOW_PACKET;
+        }
+    } else if (iph.protocol == IPPROTO_TCP) {
+        // Ignore the VSCode errors C doesn't understand eBPF quite right here, this works
+        struct tcphdr tcp;
+        if (bpf_skb_load_bytes(skb, sizeof(struct iphdr), &tcp, sizeof(struct tcphdr)) < 0) {
+            // TODO: Think this is an error condition, we should fail closed
+            return EGRESS_DENY_PACKET;
+        }
+        port = tcp.dest;
+
+        if (iph.daddr == ADDRESS_LOCALHOST_NETBYTEORDER && (port == bpf_htons(const_http_proxy_port) || port == bpf_htons(const_https_proxy_port))) {
+            struct event info = {
+                .port = bpf_ntohs(port),
+                .allowed = true,
+                .ip = bpf_ntohl(iph.daddr),
+                .pid = pid ? *pid : 0,
+                .pidResolved = pid ? true : false,
+                .originalIp =  bpf_ntohl(original_ip),
+                .hasBeenRedirected = isRedirectedByToOurProxy,
+                .byPassType = HTTP_PROXY_PACKET_BYPASS_TYPE,
+            };
+
+            bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+            return EGRESS_ALLOW_PACKET;
         }
     }
+
     /* Check if the destination IPs are in "blocked" map */
     bool mode_block_list = const_firewall_mode == FIREWALL_MODE_BLOCK_LIST;
     bool mode_allow_list = const_firewall_mode == FIREWALL_MODE_ALLOW_LIST;
@@ -309,7 +390,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
         destination_allowed = false;
     }
 
-    bool ip_present_in_firewall_list = bpf_map_lookup_elem(&firewall_ip_map, &iph.daddr);
+    bool ip_present_in_firewall_list = bpf_map_lookup_elem(&firewall_ip_map, &destination_ip);
 
     // Override destination_allowed based on firewall mode
     // and whether or not the IP is in the firewall list
@@ -325,11 +406,12 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     }
 
     struct event info = {
-            .port = skb->remote_port,
-            .ip = iph.daddr,
-            .originalIp = iph.daddr,
+            .port = bpf_ntohs(port),
+            .ip = bpf_ntohl(iph.daddr),
+            .originalIp = bpf_ntohl(original_ip),
+            .hasBeenRedirected = isRedirectedByToOurProxy,
             .allowed = destination_allowed,
-            .isDns = false,
+            .byPassType = 0,
         };
 
     info.pid = pid ? *pid : 0;

@@ -26,7 +26,7 @@ func (f FirewallMethod) String() string {
 	}
 }
 
-func IPToInt(val string) uint32 {
+func IPToIntNetworkOrder(val string) uint32 {
 	ip := net.ParseIP(val).To4()
 	return binary.LittleEndian.Uint32(ip)
 }

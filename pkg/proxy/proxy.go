@@ -76,11 +76,12 @@ func loadMkcertRootCA() (*tls.Certificate, error) {
 type Logger struct{}
 
 func (l *Logger) Printf(format string, v ...interface{}) {
-	output := fmt.Sprintf(format, v...)
-	slog.Debug("goproxy logs: " + output)
+	// output := fmt.Sprintf(format, v...)
+	// slog.Debug("goproxy logs: " + output)
 }
 
 func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) {
+	// TODO Make this dynamic and map to const in ebpf so we don't overlap with used ports
 	http_addr := ":6775"
 	https_addr := ":6776"
 
@@ -218,7 +219,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 		conn, err := GetConnFromContext(req)
 		port := 80
 		if err != nil {
-			slog.Error("Error getting conn from context", logger.SlogError(err))
+			slog.Debug("Context not set on request, likely https, falling back to source port check")
 		} else {
 			_, port = getOriginalIpAndPortFromConn(conn, firewall)
 		}
@@ -262,7 +263,6 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 
 				_, port := getOriginalIpAndPortFromConn(tlsConn.Conn, firewall)
 
-				log.Printf("tlsConn: %v", tlsConn)
 				if err != nil {
 					slog.Error("Error accepting new connection", logger.SlogError(err), slog.String("remoteAddr", c.RemoteAddr().String()))
 				}
@@ -305,7 +305,7 @@ func getPidFromContextOrSrcPort(req *http.Request, firewall *ebpf.DnsFirewall) i
 	conn, err := GetConnFromContext(req)
 	pid := -1
 	if err != nil {
-		slog.Error("Error getting conn from context", logger.SlogError(err))
+		slog.Debug("Error getting conn from context, calling back to src port lookup")
 	}
 
 	if conn == nil {

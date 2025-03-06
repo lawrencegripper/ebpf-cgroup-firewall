@@ -13,17 +13,17 @@ import (
 )
 
 type bpfEvent struct {
-	Pid              uint32
-	Port             uint16
-	Allowed          bool
-	_                [1]byte
-	Ip               uint32
-	OriginalIp       uint32
-	IsDns            bool
-	_                [1]byte
-	DnsTransactionId uint16
-	PidResolved      bool
-	_                [3]byte
+	Pid               uint32
+	Port              uint16
+	Allowed           bool
+	_                 [1]byte
+	Ip                uint32
+	OriginalIp        uint32
+	ByPassType        uint16
+	DnsTransactionId  uint16
+	PidResolved       bool
+	HasBeenRedirected bool
+	_                 [2]byte
 }
 
 // loadBpf returns the embedded CollectionSpec for bpf.

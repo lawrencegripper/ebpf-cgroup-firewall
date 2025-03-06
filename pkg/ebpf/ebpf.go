@@ -150,10 +150,10 @@ func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, er
 // In the case where firewall is blocklist, ips added here are blocked, rest art allowed
 // In the case where firewall is allowlist, ips added here are allowed, rest are blocked
 func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
-	slog.Debug("Adding IP to firewall_ips_map", "ip", ip)
+	slog.Debug("Adding IP to firewall_ips_map", "ip", ip, slog.String("reason", reason.Comment), slog.String("kind", reason.KindHumanReadable()))
 	firewallIps := e.Objects.bpfMaps.FirewallIpMap
 
-	err := firewallIps.Put(models.IPToInt(ip), models.IPToInt(ip))
+	err := firewallIps.Put(models.IPToIntNetworkOrder(ip), models.IPToIntNetworkOrder(ip))
 	if err != nil {
 		slog.Error("adding IP to allowed_ips_map", "error", err)
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
@@ -182,6 +182,7 @@ func (e *DnsFirewall) TrackIPToDomain(ip string, domain string) {
 	if e.ipDomainTracking == nil {
 		return
 	}
+
 	slog.Debug("Tracking IP to domain", "ip", ip, "domain", domain)
 	_, exists := e.ipDomainTracking[ip]
 	if !exists {
@@ -192,9 +193,10 @@ func (e *DnsFirewall) TrackIPToDomain(ip string, domain string) {
 	domainList.AddDomain(domain)
 }
 
-func intToIP(val uint32) net.IP {
+func intToIPHostByteOrder(val uint32) net.IP {
+	// TODO: Detect if the host system is big or little endian and do the right one
 	var bytes [4]byte
-	binary.LittleEndian.PutUint32(bytes[:], val)
+	binary.BigEndian.PutUint32(bytes[:], val)
 
 	return net.IPv4(bytes[0], bytes[1], bytes[2], bytes[3])
 }
@@ -242,7 +244,7 @@ func AttachRedirectorToCGroup(
 	// Tell the eBPF program about the DNS proxy PID so it is allowed to send requests to upstream dns servers
 	// without having them redirected back to the proxy
 	if exemptPID != 0 {
-		err = spec.Variables["const_dns_proxy_pid"].Set(uint32(exemptPID))
+		err = spec.Variables["const_proxy_pid"].Set(uint32(exemptPID))
 		if err != nil {
 			return nil, fmt.Errorf("setting const_dns_proxy_pid port variable failed: %w", err)
 		}
@@ -356,7 +358,7 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 
 		var reasonText string
 		var explaination string
-		reason := e.FirewallIPsWithReason[intToIP(event.Ip).String()]
+		reason := e.FirewallIPsWithReason[intToIPHostByteOrder(event.Ip).String()]
 		if reason == nil {
 			if e.FirewallMethod == models.AllowList {
 				reasonText = "NotInAllowList"
@@ -369,19 +371,44 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 			explaination = reason.Comment
 		}
 
-		ip := intToIP(event.Ip)
+		const (
+			DNS_PROXY_PACKET_BYPASS_TYPE  = 1
+			DNS_REDIRECT_TYPE             = 11
+			HTTP_PROXY_PACKET_BYPASS_TYPE = 2
+			HTTP_REDIRECT_TYPE            = 22
+		)
+
+		var eventTypeString string
+		switch event.ByPassType {
+		case DNS_PROXY_PACKET_BYPASS_TYPE:
+			eventTypeString = "dnsProxyPacket"
+		case DNS_REDIRECT_TYPE:
+			eventTypeString = "dnsRedirect"
+		case HTTP_PROXY_PACKET_BYPASS_TYPE:
+			eventTypeString = "httpProxyPacket"
+		case HTTP_REDIRECT_TYPE:
+			eventTypeString = "httpRedirect"
+		default:
+			eventTypeString = "normalPacket"
+		}
+
+		ip := intToIPHostByteOrder(event.Ip)
 		if !event.Allowed {
 			slog.Warn(
 				"Packet BLOCKED",
 				"blockedAt", "packet",
 				"blocked", !event.Allowed,
 				"ip", ip,
+				"originalIP", intToIPHostByteOrder(event.OriginalIp),
+				"bypassType", eventTypeString,
+				"port", event.Port,
 				"ipResolvedForDomains", e.ipDomainTracking[ip.String()].String(),
 				"pid", event.Pid,
 				"cmd", cmdRun,
 				"reason", reasonText,
 				"explaination", explaination,
 				"firewallMethod", e.FirewallMethod.String(),
+				"redirectedByeBPF", event.HasBeenRedirected,
 			)
 
 			// Writing blocked events is nice to have, if we're locked then skip em
@@ -389,9 +416,23 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 			e.blockedEventsMutex.Lock()
 			e.blockedEvents = append(e.blockedEvents, event)
 			e.blockedEventsMutex.Unlock()
+		} else if logger.ShowDebugLogs {
+			slog.Debug(
+				"Packet allowed",
+				"blocked", !event.Allowed,
+				"ip", ip,
+				"originalIP", intToIPHostByteOrder(event.OriginalIp),
+				"bypassType", eventTypeString,
+				"port", event.Port,
+				"ipResolvedForDomains", e.ipDomainTracking[ip.String()].String(),
+				"pid", event.Pid,
+				"cmd", cmdRun,
+				"firewallMethod", e.FirewallMethod.String(),
+				"redirectedByeBPF", event.HasBeenRedirected,
+			)
 		}
 
-		if event.IsDns {
+		if event.ByPassType == 1 || event.ByPassType == 11 {
 			if event.DnsTransactionId != 0 {
 				e.DnsTransactionIdToPid[event.DnsTransactionId] = event.Pid
 				e.DnsTransactionIdToCmd[event.DnsTransactionId] = cmdRun

@@ -134,8 +134,9 @@ func main() {
 			slog.Error("Failed to create cgroup", logger.SlogError(err))
 			os.Exit(302)
 		}
+		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			wrapper.Path, dnsPort, 0, firewallMethod)
+			wrapper.Path, dnsPort, ignoreCurrentPid, firewallMethod)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
@@ -151,16 +152,6 @@ func main() {
 	if err != nil {
 		slog.Error("Failed to start DNS blocking proxy", logger.SlogError(err))
 		os.Exit(101)
-	}
-
-	// Allow calls to localhost and upstream dns server
-	if firewallMethod == models.AllowList {
-		// TODO: This is pretty permissive, probably this should be an option for uesrs to decide on
-		err = ebpfFirewall.AddIPToFirewall("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
-		if err != nil {
-			slog.Error("Failed to allow localhost", logger.SlogError(err))
-			os.Exit(108)
-		}
 	}
 
 	// Add explicitly allowed ips
