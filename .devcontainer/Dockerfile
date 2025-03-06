@@ -13,7 +13,7 @@ RUN curl -JLO "https://dl.filippo.io/mkcert/latest?for=linux/amd64" && \
     mkcert -install 
 
 # Install netcat and curl which we need for smoke tests
-RUN apt-get update && apt-get install -y ncat curl bpflist-bpfcc
+RUN apt-get update && apt-get install -y ncat curl bpfcc-tools
 
 # Avoid git safety messages on codespace build
 RUN git config --global --add safe.directory '*'
