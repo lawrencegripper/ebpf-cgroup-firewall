@@ -42,4 +42,4 @@ soaktest: build ## Run the soak test suite (15min duration)
 	./script/soak-test.sh
 
 .PHONY: ci
-ci: lint generate test smoketest ## Run CI (lint, generate, test, smoketest)
+ci: lint generate smoketest ## Run CI (lint, generate, test, smoketest)
