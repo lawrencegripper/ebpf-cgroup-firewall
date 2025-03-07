@@ -265,9 +265,9 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		if b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.LogOnly {
 			// Do nothing
-		} else if domainMatchedFirewallDomains {
-			//                          👇 Don't add the ip if we're allowing dns requests for blocked stuff
-			if b.dnsFirewall != nil {
+		} else {
+			//                         👇 Don't add the ip if we're allowing dns requests for blocked stuff
+			if b.dnsFirewall != nil && !requestIsNotAllowed {
 				// If it did match add the IPs to the firewall ip list
 				// the matching already decided on the firewall method (allow, block)
 				for _, answer := range resp.Answer {

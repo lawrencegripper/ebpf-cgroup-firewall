@@ -424,36 +424,20 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     bool mode_log_only = const_firewall_mode == FIREWALL_MODE_LOG_ONLY;
 
     // Setup default action based on firewall mode
-    bool destination_allowed;
-    if (mode_log_only)
-    {
-        // Logonly: Allow all
-        destination_allowed = true;
-    }
-    else if (mode_block_list)
-    {
-        // Blocklist: Allow by default unless on the block list
-        destination_allowed = true;
-    }
-    else if (mode_allow_list)
-    {
-        // AllowList: Block by default unless on the allow list
-        destination_allowed = false;
-    }
-
-    bool ip_present_in_firewall_list = bpf_map_lookup_elem(&firewall_ip_map, &destination_ip);
+    bool destination_allowed = false;
+    bool ip_present_in_firewall_list = bpf_map_lookup_elem(&firewall_ip_map, &original_ip);
 
     // Override destination_allowed based on firewall mode
     // and whether or not the IP is in the firewall list
-    if (mode_block_list && ip_present_in_firewall_list)
+    if (mode_log_only && ip_present_in_firewall_list)
     {
         // Block list and IP is present - block
-        destination_allowed = false;
+        destination_allowed = true;
     }
-    else if (mode_allow_list && ip_present_in_firewall_list)
+    else if (!ip_present_in_firewall_list)
     {
         // Allow list and IP is present - allow
-        destination_allowed = true;
+        destination_allowed = false;
     }
 
     struct event info = {

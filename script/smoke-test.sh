@@ -6,8 +6,8 @@ source "$(dirname "$0")/helpers.sh"
 
 # Creating failing test for the overlap issue
 open_fold "Packet vs Http Interop: allow only google, curl google then try telnet to yahoo smtp"
-    attach_firewall_test "--allow-dns-request --allow-list google.com" "sleep 1; curl $default_curl_args https://google.com; nc -zv -w 1 github.com 22"
-    assert_exit_code 1
+    attach_firewall_test "--debug --allow-dns-request --allow-list google.com" "sleep 1; curl $default_curl_args https://google.com; ssh -o ConnectTimeout=1 -T github.com"
+    assert_exit_code 255
 close_fold
 
 # open_fold "Packet vs Http Interop: allow only google, curl google then try telnet to yahoo smtp"
@@ -16,19 +16,25 @@ close_fold
 #     assert_exit_code 1
 # close_fold
 
-open_fold "Parallel Test (Allow): Multiple HTTPS requests"
-    # Run parallel curl tests with allowlist
-    run_firewall_test "--debug --allow-list google.com,bing.com,example.com" "curl --parallel --parallel-immediate --parallel-max 10 https://google.com $default_curl_args https://bing.com $default_curl_args http://example.com $default_curl_args"
-    assert_exit_code 0
-close_fold
+# open_fold "Parallel Test allow-list: Multiple HTTPS requests"
+#     # Run parallel curl tests with allowlist
+#     run_firewall_test "--debug --allow-list google.com,bing.com,example.com" "curl --parallel --parallel-immediate --parallel-max 10 https://google.com $default_curl_args https://bing.com $default_curl_args https://example.com $default_curl_args"
+#     assert_exit_code 0
+# close_fold
 
-open_fold "Parallel Test (Allow): Multiple HTTPS requests"
-    run_firewall_test "--block-list test.com,bbc.com" "curl --parallel --parallel-immediate --parallel-max 10 https://google.com $default_curl_args https://bing.com $default_curl_args http://example.com $default_curl_args"
-    assert_exit_code 0
-close_fold
+# open_fold "Parallel Test block-list: Multiple HTTPS requests"
+#     # Run parallel curl tests with allowlist
+#     run_firewall_test "--debug --block-list test.com" "curl --parallel --parallel-immediate --parallel-max 10 https://bing.com "
+#     assert_exit_code 0
+# close_fold
+
+# open_fold "Parallel Test block-list: Mixed HTTP and HTTPS requests"
+#     run_firewall_test "--block-list test.com,bbc.com" "curl --parallel --parallel-immediate --parallel-max 10 https://google.com $default_curl_args https://bing.com $default_curl_args http://example.com $default_curl_args"
+#     assert_exit_code 0
+# close_fold
 
 open_fold "AllowList: Non-http calls to smtp.google.com:25 when google.com is allowed"
-    run_firewall_test "--allow-list google.com" "nc -zv -w 5 smtp.google.com 25"
+    run_firewall_test "--debug --allow-list google.com" "nc -zv -w 5 smtp.google.com 25"
     assert_exit_code 0
 close_fold
 

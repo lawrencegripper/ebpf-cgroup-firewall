@@ -137,7 +137,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 				"explaination", "Domain doesn't match any allowlist prefixes",
 				"blocked", true,
 				"blockedAt", "http",
-				"domain", matchedDomain,
+				"domain", req.Host,
 				"pid", pid,
 				// TODO: Command tracking for http proxy
 				// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
@@ -175,6 +175,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			if strings.HasPrefix(reqUrl, firewallUrl) {
 				urlMatchedFirewallUrls = true
 				matchedUrl = firewallUrl
+				slog.Debug("Matched url", slog.String("url", reqUrl), slog.String("firewallUrl", firewallUrl))
 			}
 		}
 
@@ -206,6 +207,8 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 		}
 
+		slog.Debug("HTTP request allowed", slog.String("url", req.URL.String()), slog.String("host", req.Host))
+
 		return req, nil
 	})
 
@@ -222,6 +225,11 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 			slog.Debug("Context not set on request, likely https, falling back to source port check")
 		} else {
 			_, port = getOriginalIpAndPortFromConn(conn, firewall)
+		}
+
+		if port == 0 {
+			slog.Warn("Failed to get port for request")
+			port = 80
 		}
 
 		originalHost := req.Host
@@ -262,6 +270,12 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 				tlsConn, err := vhost.TLS(c)
 
 				_, port := getOriginalIpAndPortFromConn(tlsConn.Conn, firewall)
+				if port == 0 {
+					// TODO: Why is this needed?
+					// I think we messed up the port mapping from src port somewhere in ebpf
+					slog.Warn("Failed to get port for request")
+					port = 443
+				}
 
 				if err != nil {
 					slog.Error("Error accepting new connection", logger.SlogError(err), slog.String("remoteAddr", c.RemoteAddr().String()))

@@ -374,8 +374,10 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 		const (
 			DNS_PROXY_PACKET_BYPASS_TYPE  = 1
 			DNS_REDIRECT_TYPE             = 11
+			LOCALHOST_PACKET_BYPASS_TYPE  = 12
 			HTTP_PROXY_PACKET_BYPASS_TYPE = 2
 			HTTP_REDIRECT_TYPE            = 22
+			PROXY_PID_BYPASS_TYPE         = 23
 		)
 
 		var eventTypeString string
@@ -384,12 +386,18 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 			eventTypeString = "dnsProxyPacket"
 		case DNS_REDIRECT_TYPE:
 			eventTypeString = "dnsRedirect"
+		case LOCALHOST_PACKET_BYPASS_TYPE:
+			eventTypeString = "localhostPacket"
 		case HTTP_PROXY_PACKET_BYPASS_TYPE:
 			eventTypeString = "httpProxyPacket"
 		case HTTP_REDIRECT_TYPE:
 			eventTypeString = "httpRedirect"
-		default:
+		case PROXY_PID_BYPASS_TYPE:
+			eventTypeString = "proxyPid"
+		case 0:
 			eventTypeString = "normalPacket"
+		default:
+			panic("Unknown bypass type")
 		}
 
 		ip := intToIPHostByteOrder(event.Ip)
