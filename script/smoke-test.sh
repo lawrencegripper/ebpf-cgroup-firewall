@@ -55,13 +55,13 @@ open_fold "AllowList: Allows https google"
     assert_exit_code 0
 close_fold
 
-open_fold "AllowList: allow github.com/lawrencegripper"
-    run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl $default_curl_args https://github.com/lawrencegripper"
+open_fold "AllowList: allow https://www.bbc.co.uk/news"
+    run_firewall_test "--allow-list https://www.bbc.co.uk/news" "curl $default_curl_args https://www.bbc.co.uk/news"
     assert_exit_code 0
 close_fold
 
-open_fold "AllowList: allow github.com/lawrencegripper but call github.com/github"
-    run_firewall_test "--allow-list https://github.com/lawrencegripper" "curl $default_curl_args https://github.com/github"
+open_fold "AllowList: allow https://www.bbc.co.uk/news but call https://www.bbc.co.uk/"
+    run_firewall_test "--allow-list https://www.bbc.co.uk/news" "curl $default_curl_args https://www.bbc.co.uk"
     assert_exit_code 22
     assert_output_contains "blocked"
     assert_output_contains "HTTP BLOCKED reason=NotInAllowList explaination=\"Url doesn't match any allowlist prefixes\" blocked=true"
@@ -69,7 +69,7 @@ close_fold
 
 open_fold "Parallel Test (Allow): Multiple HTTPS requests with specific URLs"
     # Run parallel curl tests with allowlist for specific URLs
-    run_firewall_test "--allow-list https://github.com/lawrencegripper,https://github.com/github" "curl --parallel --parallel-immediate --parallel-max 10 https://github.com/lawrencegripper $default_curl_args https://github.com/github $default_curl_args"
+    run_firewall_test "--allow-list https://www.bbc.co.uk/news/uk,https://www.bbc.co.uk/news/world" "curl --parallel --parallel-immediate --parallel-max 10 https://www.bbc.co.uk/news/uk $default_curl_args https://www.bbc.co.uk/news/world $default_curl_args"
     assert_exit_code 0
 close_fold
 
