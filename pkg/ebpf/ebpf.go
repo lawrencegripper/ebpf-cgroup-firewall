@@ -301,7 +301,10 @@ func AttachRedirectorToCGroup(
 	}
 
 	ebpfFirewall := &DnsFirewall{
-		Spec:                  spec,
+		Spec: spec,
+		// WARNING: If we don't keep an active reference to the link the the program will be unloaded
+		//          and stop doing network filtering. I know we don't use these actively but you must
+		//          leave them here!
 		Link:                  &cgroupLink,
 		SockOpsLink:           &sockOpsLink,
 		EgressLink:            &egressLink,
