@@ -400,7 +400,25 @@ int cgroup_skb_egress(struct __sk_buff *skb)
             return EGRESS_DENY_PACKET;
         }
         port = tcp.dest;
+    }
 
+    /* Check if the destination IPs are in "blocked" map */
+    bool mode_log_only = const_firewall_mode == FIREWALL_MODE_LOG_ONLY;
+
+    // Setup default action based on firewall mode
+    bool destination_allowed = false;
+    bool ip_present_in_firewall_list = bpf_map_lookup_elem(&firewall_ip_map, &original_ip);
+
+    // Only destinations added to the firewall are allowed (or we're in log only mode)
+    if (mode_log_only || ip_present_in_firewall_list) 
+    {
+        destination_allowed = true;
+    }
+
+    // Only allow the http request through to the http proxy if the destination of the packet
+    // is allowed. This gives us defense in depth. DNS must add allowed IP, Packet validates it's allowed
+    // then it gets through to the http proxy which can validate the url
+    if (destination_allowed) {
         if (iph.daddr == ADDRESS_LOCALHOST_NETBYTEORDER && (port == bpf_htons(const_http_proxy_port) || port == bpf_htons(const_https_proxy_port))) {
             struct event info = {
                 .port = bpf_ntohs(port),
@@ -416,28 +434,6 @@ int cgroup_skb_egress(struct __sk_buff *skb)
             bpf_ringbuf_output(&events, &info, sizeof(info), 0);
             return EGRESS_ALLOW_PACKET;
         }
-    }
-
-    /* Check if the destination IPs are in "blocked" map */
-    bool mode_block_list = const_firewall_mode == FIREWALL_MODE_BLOCK_LIST;
-    bool mode_allow_list = const_firewall_mode == FIREWALL_MODE_ALLOW_LIST;
-    bool mode_log_only = const_firewall_mode == FIREWALL_MODE_LOG_ONLY;
-
-    // Setup default action based on firewall mode
-    bool destination_allowed = false;
-    bool ip_present_in_firewall_list = bpf_map_lookup_elem(&firewall_ip_map, &original_ip);
-
-    // Override destination_allowed based on firewall mode
-    // and whether or not the IP is in the firewall list
-    if (mode_log_only && ip_present_in_firewall_list)
-    {
-        // Block list and IP is present - block
-        destination_allowed = true;
-    }
-    else if (!ip_present_in_firewall_list)
-    {
-        // Allow list and IP is present - allow
-        destination_allowed = false;
     }
 
     struct event info = {

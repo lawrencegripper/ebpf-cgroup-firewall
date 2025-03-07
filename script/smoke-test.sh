@@ -73,16 +73,16 @@ close_fold
 
 open_fold "Parallel Test (Block): Multiple HTTPS requests with specific URLs"
     run_firewall_test "--allow-dns-request --block-list https://github.com/lawrencegripper,https://github.com/github" "curl --parallel --parallel-immediate --parallel-max 10 https://github.com/lawrencegripper $default_curl_args https://github.com/github $default_curl_args"
-    assert_exit_code 22
+    assert_exit_code 28
     assert_output_contains "blocked"
-    assert_output_contains "HTTP BLOCKED reason=InBlockList"
+    assert_output_contains "Packet BLOCKED blockedAt=packet"
 close_fold
 
 open_fold "BlockList: Block https google. (Allow DNS)"
     run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 https://google.com"
-    assert_exit_code 22
+    assert_exit_code 28
     assert_output_contains "blocked"
-    assert_output_contains 'HTTP BLOCKED reason=InBlockList explaination="Matched Domain Prefix: google.com'
+    assert_output_contains 'Packet BLOCKED blockedAt=packet'
 close_fold
 
 open_fold "BlockList: Block google"
@@ -97,9 +97,9 @@ close_fold
 
 open_fold "BlockList: Block google. (Allow DNS)"
     run_firewall_test "--block-list google.com --allow-dns-request" "curl -s --fail-with-body --max-time 1 google.com"
-    assert_exit_code 22
+    assert_exit_code 28
     assert_output_contains "blocked"
-    assert_output_contains 'HTTP BLOCKED reason=InBlockList explaination="Matched Domain Prefix: google.com"'
+    assert_output_contains 'Packet BLOCKED blockedAt=packet'
     # TODO: Currently when using the `run` the HTTP proxy is outside the cgroup so doesn't intercept DNS requests
     # or there is some other thing broken here 
     # assert_output_contains "Matched Domain Prefix: google.com"
@@ -107,7 +107,9 @@ close_fold
 
 open_fold "AllowList: curl raw IP without dns request blocked"
     run_firewall_test "--debug --allow-list bing.com" "curl -s --fail-with-body --max-time 1 http://1.1.1.1"
-    assert_exit_code 22
+    assert_exit_code 28
+    assert_output_contains "blocked"
+    assert_output_contains 'Packet BLOCKED blockedAt=packet'
 close_fold
 
 open_fold "BlockList: Block google. Bing succeeds"
@@ -131,8 +133,9 @@ close_fold
 
 open_fold "AllowList: Block bing when only google allowed (allow dns resolution)"
     run_firewall_test "--allow-list google.com --allow-dns-request" "curl $default_curl_args bing.com"
-    assert_exit_code 22
+    assert_exit_code 28
     assert_output_contains "blocked"
+    assert_output_contains 'Packet BLOCKED blockedAt=packet'
 close_fold
 
 open_fold "LogFile: Test --log-file option"
@@ -166,10 +169,14 @@ close_fold
 
 open_fold "Attach: Curl http://bing.com when bing blocked"
     attach_firewall_test "--debug --allow-dns-request --block-list bing.com" "curl $slow_curl_args http://bing.com/"
-    assert_exit_code 22
+    assert_exit_code 28
+    assert_output_contains "blocked"
+    assert_output_contains 'Packet BLOCKED'
 close_fold
 
 open_fold "Attach: curl raw IP without dns request blocked"
     attach_firewall_test "--debug --allow-list bing.com" "curl $slow_curl_args http://1.1.1.1"
     assert_exit_code 28
+    assert_output_contains "blocked"
+    assert_output_contains 'Packet BLOCKED'
 close_fold

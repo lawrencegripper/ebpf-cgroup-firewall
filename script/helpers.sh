@@ -13,6 +13,8 @@ assert_exit_code() {
     local actual=$exitCode
     if [ "$actual" -ne "$expected" ]; then
         echo -e "\033[0;31m❌ Expected exit code $expected but got $actual\033[0m"
+        echo -e "\033[0;96m⬇️ Command Output:\033[0m" | $indent_once
+        echo "$cmdOutput" | $indent_twice
         exit 1
     else
         echo -e "\033[0;32m✅ Exit Code $actual == $expected \033[0m" | $indent_once
@@ -61,8 +63,8 @@ run_firewall_test() {
     exitCode=$?
     set -e
 
-    echo -e "\033[0;96m⬇️ Command Output:\033[0m" | $indent_once
-    echo "$cmdOutput" | $indent_twice
+    # echo -e "\033[0;96m⬇️ Command Output:\033[0m" | $indent_once
+    # echo "$cmdOutput" | $indent_twice
 }
 
 attach_firewall_test() {
@@ -95,6 +97,6 @@ attach_firewall_test() {
     cmdOutput=$(cat "$log_file")
     rm $log_file # tidy up
 
-    echo -e "\033[0;96m⬇️ Command Output:\033[0m" | $indent_once
-    echo "$cmdOutput" | $indent_twice
+    # echo -e "\033[0;96m⬇️ Command Output:\033[0m" | $indent_once
+    # echo "$cmdOutput" | $indent_twice
 }
