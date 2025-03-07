@@ -114,6 +114,8 @@ func main() {
 	// Actions should already be running the worker in a cgroup so we can just attach to that
 	// first find it:
 	pathToCGroupToRunIn := GetCGroupForCurrentProcess()
+	slog.Debug("Running in cgroup", "cgroup", pathToCGroupToRunIn)
+	slog.Debug("Pid for our process is", "pid", os.Getpid())
 	var ebpfFirewall *ebpf.DnsFirewall
 	var wrapper *cgroup.CGroupWrapper
 	if attach {

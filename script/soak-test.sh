@@ -42,18 +42,25 @@ while [ $SECONDS -lt $end_time ]; do
         assert_exit_code 0
     close_fold
 
-    # open_fold "Parallel Test (Allow): Multiple HTTPS requests"
-    #     run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://github.com/github"
-    #     assert_exit_code 22
-    # close_fold
+    open_fold "Parallel Test (Allow): Multiple HTTPS requests"
+        run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://github.com/github https://github.com/github/bob https://github.com/bill"
+        assert_exit_code 22
+    close_fold
 
     open_fold "Soak Test: Allow smtp.google.com:25 (SMTP)"
         run_test_command "nc -zv -w 1 smtp.google.com 25"
         assert_exit_code 0
     close_fold
 
-    open_fold "Soak Test: Block smtp.mail.yahoo.com:587 (SMTP)"
-        run_test_command "nc -zv -w 1 smtp.mail.yahoo.com 587"
+    # TODO: This is a foot gun, if we enable a url it should only enable for port 80 and 443 not open
+    # up the whole domain for any non http traffic
+    open_fold "Soak Test: Allow SSH to GitHub (SSH) because domain is enabled automatically by full url"
+        run_test_command "nc -zv -w 1 github.com 22"
+        assert_exit_code 0
+    close_fold
+
+    open_fold "Soak Test: Block SSH to sourceforge (SSH)"
+        run_test_command "nc -zv -w 1 test.git.sourceforge.net 22"
         assert_exit_code 1
     close_fold
 done
