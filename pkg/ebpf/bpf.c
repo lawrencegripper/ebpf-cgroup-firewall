@@ -37,8 +37,10 @@ struct event *unused __attribute__((unused));
 
 const __u16 DNS_PROXY_PACKET_BYPASS_TYPE = 1;
 const __u16 DNS_REDIRECT_TYPE = 11;
+const __u16 LOCALHOST_PACKET_BYPASS_TYPE = 12;
 const __u16 HTTP_PROXY_PACKET_BYPASS_TYPE = 2;
 const __u16 HTTP_REDIRECT_TYPE = 22;
+const __u16 PROXY_PID_BYPASS_TYPE = 23;
 
 // Force emitting struct event into the ELF.
 // struct event *unused __attribute__((unused));
@@ -199,9 +201,9 @@ int connect4(struct bpf_sock_addr *ctx)
         struct event info = {
             .pid = pid,
             .pidResolved = true,
-            .port = ctx->user_port,
+            .port = bpf_ntohs(ctx->user_port),
             .allowed = true,
-            .ip = ctx->user_ip4,
+            .ip = bpf_ntohl(ctx->user_ip4),
             .originalIp = orig->addr,
             .byPassType = HTTP_REDIRECT_TYPE,
         };
@@ -218,9 +220,9 @@ int connect4(struct bpf_sock_addr *ctx)
         struct event info = {
             .pid = pid,
             .pidResolved = true,
-            .port = ctx->user_port,
+            .port = bpf_ntohs(ctx->user_port),
             .allowed = true,
-            .ip = ctx->user_ip4,
+            .ip = bpf_ntohl(ctx->user_ip4),
             .originalIp = orig->addr,
             .byPassType = DNS_REDIRECT_TYPE,
         };
@@ -249,15 +251,31 @@ int getpeername4(struct bpf_sock_addr *ctx)
 // via the src port and the socket cookie
 SEC("sockops")
 int cg_sock_ops(struct bpf_sock_ops *ctx) {
-  if (ctx->family != AF_INET) return 0;
+    if (ctx->family != AF_INET) return 0;
 
-  // Outbound connection established (ie. Client calling out)
-  // So a client program has done `curl example.com` 
-  if (ctx->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
-    __u64 cookie = bpf_get_socket_cookie(ctx);
-    __u16 src_port = ctx->local_port;
-    bpf_map_update_elem(&src_port_to_sock_client, &src_port, &cookie, 0);
-  }
+    // __u64 socketCookie = bpf_get_socket_cookie(ctx);
+    // __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
+
+    // // Outbound conns from the proxy pid don't need to be tracked
+    // bool isFromProxyPid = (pid ? *pid : -1) == const_proxy_pid;
+    // if (isFromProxyPid) {
+    //     return EGRESS_ALLOW_PACKET;
+    // } else {
+    //     // Outbound connection established (ie. Client calling out)
+    //     // So a client program has done `curl example.com` 
+    //     if (ctx->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
+    //         __u16 src_port = ctx->local_port;
+    //         bpf_map_update_elem(&src_port_to_sock_client, &src_port, &socketCookie, 0);
+    //     }
+    // }
+
+    // Outbound connection established (ie. Client calling out)
+    // So a client program has done `curl example.com` 
+    if (ctx->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
+        __u64 cookie = bpf_get_socket_cookie(ctx);
+        __u16 src_port = ctx->local_port;
+        bpf_map_update_elem(&src_port_to_sock_client, &src_port, &cookie, 0);
+    }
 
 //   // Inbound connection estabilished (ie. Server receiving call)
 //   // Our client program `curl example.com` has been redirected to our 
@@ -289,6 +307,16 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     bool isFromProxyPid = (pid ? *pid : -1) == const_proxy_pid;
     if (isFromProxyPid) {
         // Allow the ebpf-firewall process to have full outbound access
+        struct event info = {
+            .port = -1,
+            .allowed = true,
+            .ip = bpf_ntohl(iph.daddr),
+            .pid = pid ? *pid : 0,
+            .pidResolved = pid ? true : false,
+            .byPassType = PROXY_PID_BYPASS_TYPE,
+        };
+
+        bpf_ringbuf_output(&events, &info, sizeof(info), 0);
         return EGRESS_ALLOW_PACKET;
     }
 
@@ -300,8 +328,29 @@ int cgroup_skb_egress(struct __sk_buff *skb)
         // consider the original ip that was being targetted
         destination_ip = *original_ip_ptr;
     }
-    __u32 original_ip = original_ip_ptr ? *original_ip_ptr : 0;
+
+    // If the request was redirected consider the original ip as the destination
+    // if it wasn't redirected then consider the destination ip as the destination
+    __u32 original_ip = original_ip_ptr ? *original_ip_ptr : destination_ip;
     bool isRedirectedByToOurProxy = false;
+
+    // Allow traffic if original address was to localhost
+    if (original_ip == ADDRESS_LOCALHOST_NETBYTEORDER) {
+        struct event info = {
+            .port = -1,
+            .allowed = true,
+            .ip = bpf_ntohl(iph.daddr),
+            .originalIp =  bpf_ntohl(original_ip),
+            .pid = pid ? *pid : 0,
+            .pidResolved = pid ? true : false,
+            .hasBeenRedirected = isRedirectedByToOurProxy,
+            .byPassType = LOCALHOST_PACKET_BYPASS_TYPE,
+        };
+
+        bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+
+        return EGRESS_ALLOW_PACKET;
+    }
 
     /* 
     * Intercept UDP requests to the DNS Proxy to parse out the TransactionID
@@ -318,6 +367,8 @@ int cgroup_skb_egress(struct __sk_buff *skb)
         }
 
         port = udp.uh_dport;
+
+        // return EGRESS_ALLOW_PACKET;
 
         bool isProxiedDnsRequest = udp.uh_dport == bpf_htons(const_dns_proxy_port) && iph.daddr == ADDRESS_LOCALHOST_NETBYTEORDER;
         if (isProxiedDnsRequest)

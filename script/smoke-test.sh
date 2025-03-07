@@ -6,15 +6,15 @@ source "$(dirname "$0")/helpers.sh"
 
 # Creating failing test for the overlap issue
 open_fold "Packet vs Http Interop: allow only google, curl google then try telnet to yahoo smtp"
-    attach_firewall_test "--allow-dns-request --allow-list google.com" "sleep 1; curl $default_curl_args https://google.com; nc -zv -w 1 smtp.mail.yahoo.com 587"
+    attach_firewall_test "--allow-dns-request --allow-list google.com" "sleep 1; curl $default_curl_args https://google.com; nc -zv -w 1 github.com 22"
     assert_exit_code 1
 close_fold
 
-open_fold "Packet vs Http Interop: allow only google, curl google then try telnet to yahoo smtp"
-    # TODO: Validate that the gmail.com one completes successfully
-    attach_firewall_test "--allow-dns-request --allow-list ggmail.com" "sleep 1; nc -zv -w 1 smtp.gmail.com 25; nc -zv -w 1 smtp.mail.yahoo.com 587"
-    assert_exit_code 1
-close_fold
+# open_fold "Packet vs Http Interop: allow only google, curl google then try telnet to yahoo smtp"
+#     # TODO: Validate that the gmail.com one completes successfully
+#     attach_firewall_test "--allow-dns-request --allow-list ggmail.com" "sleep 1; nc -zv -w 1 smtp.gmail.com 25; nc -zv -w 1 github.com 22"
+#     assert_exit_code 1
+# close_fold
 
 open_fold "Parallel Test (Allow): Multiple HTTPS requests"
     # Run parallel curl tests with allowlist

@@ -236,10 +236,16 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					"domain", q.Name,
 					"pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
 					"cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
-					"firewallMethod", b.dnsFirewall.FirewallMethod.String(),
-				)
+					"firewallMethod", b.dnsFirewall.FirewallMethod.String())
 				return
 			}
+		}
+		if requestIsNotAllowed && b.allowDNSRequestForBlocked {
+			slog.Debug(
+				"DNS request which would have been blocked was allowed due to --allow-dns-request",
+				"domain", q.Name,
+				"firewallMethod", b.dnsFirewall.FirewallMethod.String(),
+			)
 		}
 
 		resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)
@@ -261,7 +267,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			// Do nothing
 		} else if domainMatchedFirewallDomains {
 			//                          👇 Don't add the ip if we're allowing dns requests for blocked stuff
-			if b.dnsFirewall != nil && !requestIsNotAllowed {
+			if b.dnsFirewall != nil {
 				// If it did match add the IPs to the firewall ip list
 				// the matching already decided on the firewall method (allow, block)
 				for _, answer := range resp.Answer {
