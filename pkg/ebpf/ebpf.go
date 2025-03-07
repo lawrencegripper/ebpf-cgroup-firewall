@@ -70,6 +70,8 @@ func (d *DomainList) String() string {
 type DnsFirewall struct {
 	Spec                  *ebpf.CollectionSpec
 	Link                  *link.Link
+	SockOpsLink           *link.Link
+	EgressLink            *link.Link
 	Programs              bpfPrograms
 	Objects               *bpfObjects
 	FirewallIPsWithReason map[string]*Reason
@@ -272,7 +274,7 @@ func AttachRedirectorToCGroup(
 	}
 
 	// TODO store link and use it to pin
-	_, err = link.AttachCgroup(link.CgroupOptions{
+	egressLink, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroup.Name(),
 		Attach:  ebpf.AttachCGroupInetEgress,
 		Program: obj.CgroupSkbEgress,
@@ -282,7 +284,7 @@ func AttachRedirectorToCGroup(
 	}
 
 	// TODO store link and use it to pin
-	_, err = link.AttachCgroup(link.CgroupOptions{
+	sockOpsLink, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroup.Name(),
 		Attach:  ebpf.AttachCGroupSockOps,
 		Program: obj.CgSockOps,
@@ -301,6 +303,8 @@ func AttachRedirectorToCGroup(
 	ebpfFirewall := &DnsFirewall{
 		Spec:                  spec,
 		Link:                  &cgroupLink,
+		SockOpsLink:           &sockOpsLink,
+		EgressLink:            &egressLink,
 		Objects:               &obj,
 		RingBufferReader:      ringBufferEventsReader,
 		FirewallMethod:        firewallMethod,
