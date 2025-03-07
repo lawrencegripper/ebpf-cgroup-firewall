@@ -81,6 +81,7 @@ type DnsFirewall struct {
 	DnsTransactionIdToCmd map[uint16]string
 	blockedEvents         []bpfEvent
 	blockedEventsMutex    sync.Mutex
+	reasonMutex           sync.Mutex
 	ipDomainTracking      map[string]*DomainList
 }
 
@@ -174,8 +175,10 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 	// goroutine 1540 [running]:
 	// github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf.(*DnsFirewall).AddIPToFirewall(0xc000292510, {0xc00020aaa0, 0xd}, 0xc0000122b8)
 	//   /workspaces/ebpf-cgroup-firewall/pkg/ebpf/ebpf.go:159 +0x29c
-
+	// For now mutex hack
+	e.reasonMutex.Lock()
 	e.FirewallIPsWithReason[ip] = reason
+	e.reasonMutex.Unlock()
 
 	return nil
 }
@@ -315,6 +318,7 @@ func AttachRedirectorToCGroup(
 		DnsTransactionIdToCmd: map[uint16]string{},
 		blockedEvents:         []bpfEvent{},
 		blockedEventsMutex:    sync.Mutex{},
+		reasonMutex:           sync.Mutex{},
 		ipDomainTracking:      map[string]*DomainList{},
 	}
 
