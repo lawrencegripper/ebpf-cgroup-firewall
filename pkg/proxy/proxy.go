@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -50,8 +51,12 @@ func GetConnFromContext(r *http.Request) (net.Conn, error) {
 // Load the mkcert root CA certificate and key
 // Assumes `mkcert -install` has been run
 func loadMkcertRootCA() (*tls.Certificate, error) {
-	caCertPath := "/root/.local/share/mkcert/rootCA.pem"
-	caCertKeyPath := "/root/.local/share/mkcert/rootCA-key.pem"
+	caRootPath, err := exec.Command("mkcert", "--CAROOT").Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mkcert root CA path: %v", err)
+	}
+	caCertPath := strings.TrimSpace(string(caRootPath)) + "/rootCA.pem"
+	caCertKeyPath := strings.TrimSpace(string(caRootPath)) + "/rootCA-key.pem"
 
 	caCertContent, err := os.ReadFile(caCertPath)
 	if err != nil {
@@ -95,7 +100,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 
 	cert, err := loadMkcertRootCA()
 	if err != nil {
-		slog.Error("Error loading mkcert root CA", logger.SlogError(err))
+		slog.Error("Error loading mkcert root CA, ensure you have run 'mkcert --install' as this user", logger.SlogError(err))
 		panic(err)
 	}
 

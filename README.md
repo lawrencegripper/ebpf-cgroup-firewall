@@ -4,7 +4,7 @@ Doesn't it suck that firewalls are IP based and you can't easily track which pro
 
 This projects aims fix that.
 
-It gives a simple, easy, **outbound firewall accepting DNS names or IPs for block/allow lists**.
+It gives a simple, easy, **outbound firewall accepting DNS names, URLS or IPs for block/allow lists**.
 
 Most firewalls inspect trafic at the whole machine, making it feel like a needle in a haystack when looking for a single programs activity.
 
@@ -15,8 +15,9 @@ It does this by using:
 - eBPF to intercept [DNS requests](https://docs.ebpf.io/linux/program-type/BPF_PROG_TYPE_CGROUP_SOCK_ADDR/) and [allow/block packets](https://docs.ebpf.io/linux/program-type/BPF_PROG_TYPE_CGROUP_SKB/)
 - [socket cookies](https://docs.ebpf.io/linux/helper-function/bpf_get_socket_cookie/) and [DNS Transaction IDs](https://beta.computer-networking.info/syllabus/default/protocols/dns.html) to correlate which command made a request and tracks which IP's resolved from which domains
 - [cGroups](https://man7.org/linux/man-pages/man7/cgroups.7.html) to target a single process or group of linux processes
+- [goproxy](https://github.com/elazarl/goproxy) to intercept HTTP and HTTPS traffic
 
-For each dns request or packet this means it has:
+For each url, dns request or packet this means it has:
 - The command which initiated it and it's PID `ip=1.1.1.1 ipResolvedForDomains="No Domains"` vs `ip=142.250.187.206 ipResolvedForDomains=google.com`
 - The IP requested and which DNS request resolved to it `pid=56253 cmd="curl --max-time 1 1.1.1.1 || curl google.com "`
 - Why the decision was made ie. `explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com`
@@ -24,6 +25,8 @@ For each dns request or packet this means it has:
 ## Example Usage
 
 Try it out, here are some examples
+
+To use HTTPS interception you first need to [run `mkcert --install`](https://github.com/FiloSottile/mkcert) to create a root CA for intercepting and decoding HTTPS requests. This is already done for you in the devcontainer if you'd like to try it out there.
 
 ### Block `google.com`
 
