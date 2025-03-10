@@ -47,25 +47,28 @@ func (r *Reason) KindHumanReadable() string {
 }
 
 type DomainList struct {
-	Domains map[string]bool
+	Domains *utils.GenericSyncMap[string, bool]
 }
 
 func (d *DomainList) AddDomain(domain string) {
 	if d.Domains == nil {
-		d.Domains = make(map[string]bool)
+		d.Domains = new(utils.GenericSyncMap[string, bool])
 	}
-	d.Domains[domain] = true
+	d.Domains.Store(domain, true)
 }
 
 func (d *DomainList) String() string {
 	if d == nil || d.Domains == nil {
 		return "No Domains"
 	}
-	keys := make([]string, 0, len(d.Domains))
-	for k := range d.Domains {
-		keys = append(keys, k)
-	}
-	return strings.Join(keys, ",")
+
+	var result strings.Builder
+	d.Domains.Range(func(key string, value bool) bool {
+		result.WriteString(key + ", ")
+		return true
+	})
+
+	return result.String()
 }
 
 type DnsFirewall struct {
