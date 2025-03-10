@@ -28,6 +28,16 @@ Try it out, here are some examples
 
 To use HTTPS interception you first need to [run `mkcert --install`](https://github.com/FiloSottile/mkcert) to create a root CA for intercepting and decoding HTTPS requests. This is already done for you in the devcontainer if you'd like to try it out there.
 
+### Attach to a Docker Container and block calling `yahoo.com` from the container
+
+1. Start a container `docker run --name=test-container -it ghcr.io/curl/curl-container/curl-dev-debian:master /bin/bash`
+2. Attach the egress firewall `sudo PATH=$PATH ./bin/ebpf-cgroup-firewall attach --block-list yahoo.com --docker-container test-container`
+   - Note: `PATH` is passed to sudo as `mkcert` for me isn't in `root` users path as installed from `brew`
+3. Run `curl yahoo.com` inside the container and observe it's blocked
+4. Run `curl bing.com` inside the container and observe it's allowed
+
+![blocking yahoo.co.uk inside a container](./docs/container-example.png)
+
 ### Block `google.com`
 
 `./ebpf-cgroup-firewall run --block-list google.com "curl google.com"`

@@ -23,7 +23,7 @@ type DNSProxy struct {
 
 // StartDNSMonitoringProxy configures eBPF to redirect DNS requests for the specified cgroup to a local DNS server
 // which blocks requests to the specified domains.
-func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.DnsFirewall, allowDNSRequestForBlocked bool) (*DNSProxy, error) {
+func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.EgressFirewall, allowDNSRequestForBlocked bool) (*DNSProxy, error) {
 	// Start the DNS proxy
 	slog.Debug("Starting DNS server", "port", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
@@ -53,7 +53,7 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.Dn
 		DownstreamServerAddr:      downstreamServerAddr,
 		allowDNSRequestForBlocked: allowDNSRequestForBlocked,
 	}
-	server := &dns.Server{Addr: fmt.Sprintf(":%d", listenPort), Net: "udp", Handler: serverHandler}
+	server := &dns.Server{Addr: fmt.Sprintf("0.0.0.0:%d", listenPort), Net: "udp", Handler: serverHandler}
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
@@ -153,7 +153,7 @@ type blockingDNSHandler struct {
 	firewallDomains           []string
 	BlockLog                  []dnsBlockResult
 	blockLogMu                sync.Mutex
-	dnsFirewall               *ebpf.DnsFirewall
+	dnsFirewall               *ebpf.EgressFirewall
 	downstreamClient          *dns.Client
 	DownstreamServerAddr      string
 	allowDNSRequestForBlocked bool

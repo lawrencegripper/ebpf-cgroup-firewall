@@ -13,7 +13,7 @@ import (
 )
 
 func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
-	blockingFirewall := ebpf.DnsFirewall{
+	blockingFirewall := ebpf.EgressFirewall{
 		FirewallMethod: models.BlockList,
 	}
 	domainsToBlock := []string{"bing.com"}
@@ -44,7 +44,7 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 }
 
 func TestDNSProxy_BlocksDomains(t *testing.T) {
-	blockingFirewall := ebpf.DnsFirewall{
+	blockingFirewall := ebpf.EgressFirewall{
 		FirewallMethod: models.BlockList,
 	}
 	domainsToBlock := []string{"example.com"}

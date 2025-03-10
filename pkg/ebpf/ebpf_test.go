@@ -46,7 +46,7 @@ func TestAttachRedirectorToCGroup_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0, models.LogOnly)
+			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0, models.LogOnly, false)
 			assert.EqualError(t, err, tt.expectedError)
 		})
 	}
@@ -98,7 +98,7 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 			cgroupMan, cgroupPath := createTestCGroup(t)
 
 			redirectDNSToPort := 55555
-			firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, tt.firewallMode)
+			firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, tt.firewallMode, false)
 			require.NoError(t, err)
 
 			// Start a http server to validate normal requests are not impacted
@@ -178,7 +178,7 @@ func TestAttachRedirectorToCGroup_IPv6(t *testing.T) {
 	cgroupMan, cgroupPath := createTestCGroup(t)
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, models.AllowList)
+	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, models.AllowList, false)
 	require.NoError(t, err)
 
 	// Start a http server on IPv6
@@ -236,7 +236,7 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	cgroupPathForCurrentProcess := getCurrentCGroup()
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0, models.AllowList)
+	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0, models.AllowList, false)
 	require.NoError(t, err)
 
 	err = firewall.AddIPToFirewall("127.0.0.1", nil)

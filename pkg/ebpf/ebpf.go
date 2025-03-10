@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 
@@ -71,7 +72,7 @@ func (d *DomainList) String() string {
 	return result.String()
 }
 
-type DnsFirewall struct {
+type EgressFirewall struct {
 	Spec                  *ebpf.CollectionSpec
 	Link                  *link.Link
 	SockOpsLink           *link.Link
@@ -88,7 +89,7 @@ type DnsFirewall struct {
 	ipDomainTracking      *utils.GenericSyncMap[string, *DomainList]
 }
 
-func (e *DnsFirewall) BlockedEvents() []bpfEvent {
+func (e *EgressFirewall) BlockedEvents() []bpfEvent {
 	e.blockedEventsMutex.Lock()
 	defer e.blockedEventsMutex.Unlock()
 
@@ -97,7 +98,7 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 	return blockedEventsCopy
 }
 
-func (e *DnsFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
+func (e *EgressFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
 	clientSocketCookie := uint64(16)
 	err := e.Objects.bpfMaps.SrcPortToSockClient.Lookup(uint16(sourcePort), &clientSocketCookie)
 	if err != nil {
@@ -115,7 +116,7 @@ func (e *DnsFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
 	return pid, nil
 }
 
-func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, error) {
+func (e *EgressFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, error) {
 	maps := e.Objects.bpfMaps
 
 	// Use the source port map to get the client socket cookie
@@ -155,7 +156,7 @@ func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, er
 // the FirewallMethod (logonly, allowlist, blocklist) defines how this list is handled
 // In the case where firewall is blocklist, ips added here are blocked, rest art allowed
 // In the case where firewall is allowlist, ips added here are allowed, rest are blocked
-func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
+func (e *EgressFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 	slog.Debug("Adding IP to firewall_ips_map", "ip", ip, slog.String("reason", reason.Comment), slog.String("kind", reason.KindHumanReadable()))
 	firewallIps := e.Objects.bpfMaps.FirewallIpMap
 
@@ -174,7 +175,7 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 	return nil
 }
 
-func (e *DnsFirewall) TrackIPToDomain(ip string, domain string) {
+func (e *EgressFirewall) TrackIPToDomain(ip string, domain string) {
 	if e.ipDomainTracking == nil {
 		return
 	}
@@ -203,16 +204,43 @@ func AttachRedirectorToCGroup(
 	dnsProxyPort int,
 	exemptPID int,
 	firewallMethod models.FirewallMethod,
-) (*DnsFirewall, error) {
+	isDockerContainer bool,
+) (*EgressFirewall, error) {
 	// Remove resource limits for kernels <5.11.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("removing memlock: %w", err)
 	}
 
+	slog.Debug("Attaching eBPF programs to cgroup", "cgroup", cGroupPath)
+
 	// Load network block spec
 	spec, err := loadBpf()
 	if err != nil {
 		return nil, fmt.Errorf("loading networkblock spec: %w", err)
+	}
+
+	// TODO: Make this detection better. Use the docker sdk to find containers and compare to the cgroup path
+	if isDockerContainer {
+		slog.Warn("Docker cgroup detected, updating localhost redirect to instead use the docker0 interface")
+		output, err := exec.Command("sh", "-c", "docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}'").Output()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get docker bridge gateway IP: %w", err)
+		}
+		dockerBridgeGatewayIP := strings.TrimSpace(string(output))
+		slog.Debug("Docker bridge gateway IP detected", "dockerBridgeGatewayIP", dockerBridgeGatewayIP)
+
+		// Set the const_mitm_proxy_address proxy IP
+		ip := net.ParseIP(dockerBridgeGatewayIP).To4()
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP address: %s", dockerBridgeGatewayIP)
+		}
+
+		// TODO: What if we're on ARM? It's this then wrong?
+		ipNetworkOrder := binary.LittleEndian.Uint32(ip)
+		err = spec.Variables["const_mitm_proxy_address"].Set(ipNetworkOrder)
+		if err != nil {
+			return nil, fmt.Errorf("setting const_mitm_proxy_address port variable failed: %w", err)
+		}
 	}
 
 	// Set the firewall method
@@ -290,7 +318,7 @@ func AttachRedirectorToCGroup(
 		return nil, fmt.Errorf("opening ringbuf reader: %w", err)
 	}
 
-	ebpfFirewall := &DnsFirewall{
+	ebpfFirewall := &EgressFirewall{
 		Spec: spec,
 		// WARNING: If we don't keep an active reference to the link the the program will be unloaded
 		//          and stop doing network filtering. I know we don't use these actively but you must
@@ -315,7 +343,7 @@ func AttachRedirectorToCGroup(
 	return ebpfFirewall, nil
 }
 
-func (e *DnsFirewall) monitorRingBufferEventfunc() {
+func (e *EgressFirewall) monitorRingBufferEventfunc() {
 	var event bpfEvent
 	pid2CmdLineCache := map[int]string{}
 

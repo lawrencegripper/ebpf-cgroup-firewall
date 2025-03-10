@@ -34,9 +34,15 @@ type RunArgs struct {
 	Command string `arg:"" help:"The command to run" name:"command"`
 }
 
+type AttachArgs struct {
+	FirewallArgs
+	CGroupPath              string `xor:"CGroupPath,DockerContainerNameOrId" help:"The path to the cgroup which should be firewalled, if blank current cgroup used" name:"cgroup-path"`
+	DockerContainerNameOrId string `xor:"CGroupPath,DockerContainerNameOrId" help:"The docker container name or ID to attach" name:"docker-container"`
+}
+
 var CmdOptions struct {
-	Run    RunArgs      `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
-	Attach FirewallArgs `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
+	Run    RunArgs    `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
+	Attach AttachArgs `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
 }
 
 func main() {
@@ -45,6 +51,8 @@ func main() {
 	var blockList []string
 	var firewallMethod models.FirewallMethod
 	var logfile string
+	var cgroupPath string
+	var attachingToDockerContainer bool
 
 	ctx := kong.Parse(&CmdOptions)
 	switch ctx.Command() {
@@ -63,6 +71,24 @@ func main() {
 		logger.ShowDebugLogs = CmdOptions.Attach.Debug
 		if CmdOptions.Attach.LogFile != nil {
 			logfile = *CmdOptions.Attach.LogFile
+		}
+
+		if CmdOptions.Attach.DockerContainerNameOrId != "" {
+			// TODO: Replace with docker SDK call
+			// TODO: command injection
+			attachingToDockerContainer = true
+			cmd := exec.Command("docker", "inspect", "--format", "{{.Id}}", CmdOptions.Attach.DockerContainerNameOrId)
+			output, err := cmd.Output()
+			if err != nil {
+				slog.Error("Failed to get Docker container ID", logger.SlogError(err))
+				os.Exit(110)
+			}
+			containerID := strings.TrimSpace(string(output))
+			cgroupPath = fmt.Sprintf("/sys/fs/cgroup/system.slice/docker-%s.scope", containerID)
+		} else if CmdOptions.Attach.CGroupPath != "" {
+			cgroupPath = CmdOptions.Attach.CGroupPath
+		} else {
+			cgroupPath = GetCGroupForCurrentProcess()
 		}
 	default:
 		panic("Command not implemented")
@@ -113,32 +139,32 @@ func main() {
 
 	// Actions should already be running the worker in a cgroup so we can just attach to that
 	// first find it:
-	pathToCGroupToRunIn := GetCGroupForCurrentProcess()
-	slog.Debug("Running in cgroup", "cgroup", pathToCGroupToRunIn)
+	slog.Debug("Running in cgroup", "cgroup", cgroupPath)
 	slog.Debug("Pid for our process is", "pid", os.Getpid())
-	var ebpfFirewall *ebpf.DnsFirewall
+	var ebpfFirewall *ebpf.EgressFirewall
 	var wrapper *cgroup.CGroupWrapper
 	if attach {
 		// then attach the eBPF program to it
 		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			pathToCGroupToRunIn, dnsPort, ignoreCurrentPid, firewallMethod)
+			cgroupPath, dnsPort, ignoreCurrentPid, firewallMethod, false)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
 		}
 	} else {
+		currentCGroup := GetCGroupForCurrentProcess()
 		stringCmd := CmdOptions.Run.Command
 		splitCmd := strings.Split(stringCmd, " ")
 		cmd := exec.Command(splitCmd[0], splitCmd[1:]...)
-		wrapper, err = cgroup.NewCGroupWrapper(pathToCGroupToRunIn, cmd)
+		wrapper, err = cgroup.NewCGroupWrapper(currentCGroup, cmd)
 		if err != nil {
 			slog.Error("Failed to create cgroup", logger.SlogError(err))
 			os.Exit(302)
 		}
 		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			wrapper.Path, dnsPort, ignoreCurrentPid, firewallMethod)
+			wrapper.Path, dnsPort, ignoreCurrentPid, firewallMethod, attachingToDockerContainer)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)

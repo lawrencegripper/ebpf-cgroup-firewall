@@ -51,10 +51,14 @@ func GetConnFromContext(r *http.Request) (net.Conn, error) {
 // Load the mkcert root CA certificate and key
 // Assumes `mkcert -install` has been run
 func loadMkcertRootCA() (*tls.Certificate, error) {
-	caRootPath, err := exec.Command("mkcert", "--CAROOT").Output()
+	cmd := exec.Command("bash", "-c", "mkcert --CAROOT")
+	cmd.Env = os.Environ()
+	caRootPath, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get mkcert root CA path: %v", err)
+		return nil, fmt.Errorf("failed to get mkcert root CA path: %s %v", caRootPath, err)
 	}
+
+	slog.Debug("mkcert root CA path", slog.String("path", strings.TrimSpace(string(caRootPath))))
 	caCertPath := strings.TrimSpace(string(caRootPath)) + "/rootCA.pem"
 	caCertKeyPath := strings.TrimSpace(string(caRootPath)) + "/rootCA-key.pem"
 
@@ -85,7 +89,7 @@ func (l *Logger) Printf(format string, v ...interface{}) {
 	// slog.Debug("goproxy logs: " + output)
 }
 
-func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) {
+func Start(firewall *ebpf.EgressFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) {
 	// TODO Make this dynamic and map to const in ebpf so we don't overlap with used ports
 	http_addr := ":6775"
 	https_addr := ":6776"
@@ -320,7 +324,7 @@ func Start(firewall *ebpf.DnsFirewall, dnsProxy *dns.DNSProxy, firewallDomains [
 // In the case of transparent HTTPS requests the ctx is lost along the way
 // instead we use the source port to look up the conn in the TLSSourcePortToConn map
 // TODO: Unbounded growth in this map over time
-func getPidFromContextOrSrcPort(req *http.Request, firewall *ebpf.DnsFirewall) int {
+func getPidFromContextOrSrcPort(req *http.Request, firewall *ebpf.EgressFirewall) int {
 	conn, err := GetConnFromContext(req)
 	pid := -1
 	if err != nil {
@@ -360,7 +364,7 @@ func clearSourcePortToConnMap(req *http.Request) {
 	}
 }
 
-func getPidFromConn(conn net.Conn, firewall *ebpf.DnsFirewall) int {
+func getPidFromConn(conn net.Conn, firewall *ebpf.EgressFirewall) int {
 	if conn == nil {
 		return -1
 	}
@@ -373,7 +377,7 @@ func getPidFromConn(conn net.Conn, firewall *ebpf.DnsFirewall) int {
 	return int(pid)
 }
 
-func getOriginalIpAndPortFromConn(conn net.Conn, firewall *ebpf.DnsFirewall) (net.IP, int) {
+func getOriginalIpAndPortFromConn(conn net.Conn, firewall *ebpf.EgressFirewall) (net.IP, int) {
 	sourcePort := sourcePortFromConn(conn)
 
 	ip, port, err := firewall.HostAndPortFromSourcePort(sourcePort)
