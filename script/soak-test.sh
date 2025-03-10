@@ -8,7 +8,6 @@ ps aux | grep './bin/ebpf-cgroup-firewall' | grep -v grep | awk '{print $2}' | x
 log_file="/tmp/firewall-${RANDOM}.json"
 pid=""
 source "$(dirname "$0")/helpers.sh"
-trap "echo 'Script failed. Outputting logs:'; sleep 1; cat $log_file; kill $pid" EXIT
 trap "echo 'Script failed. Outputting logs:'; sleep 1; cat $log_file; kill $pid" ERR
 
 end_time=$((SECONDS + 900)) # 15 minutes from now
