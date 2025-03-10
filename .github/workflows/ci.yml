@@ -22,3 +22,7 @@ jobs:
       with:
         push: never
         runCmd: make ci
+    
+    # These tests can't be run in the devcontainer as rely on the host cgroup mapping for docker attach
+    - name: Run host only smoketests
+      run: make ./script/smoke-test-host.sh

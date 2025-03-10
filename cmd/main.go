@@ -76,6 +76,7 @@ func main() {
 		if CmdOptions.Attach.DockerContainerNameOrId != "" {
 			// TODO: Replace with docker SDK call
 			// TODO: command injection
+			slog.Debug("Attaching to docker container from cli", "container-name", CmdOptions.Attach.DockerContainerNameOrId)
 			attachingToDockerContainer = true
 			cmd := exec.Command("docker", "inspect", "--format", "{{.Id}}", CmdOptions.Attach.DockerContainerNameOrId)
 			output, err := cmd.Output()
@@ -84,6 +85,7 @@ func main() {
 				os.Exit(110)
 			}
 			containerID := strings.TrimSpace(string(output))
+			slog.Debug("Docker container ID is", "id", containerID)
 			cgroupPath = fmt.Sprintf("/sys/fs/cgroup/system.slice/docker-%s.scope", containerID)
 		} else if CmdOptions.Attach.CGroupPath != "" {
 			cgroupPath = CmdOptions.Attach.CGroupPath
