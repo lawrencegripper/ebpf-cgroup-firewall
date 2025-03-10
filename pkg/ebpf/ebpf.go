@@ -20,6 +20,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
 
 type AllowKind int
@@ -74,15 +75,14 @@ type DnsFirewall struct {
 	EgressLink            *link.Link
 	Programs              bpfPrograms
 	Objects               *bpfObjects
-	FirewallIPsWithReason map[string]*Reason
+	FirewallIPsWithReason *utils.GenericSyncMap[string, *Reason]
 	RingBufferReader      *ringbuf.Reader
 	FirewallMethod        models.FirewallMethod
 	DnsTransactionIdToPid map[uint16]uint32
 	DnsTransactionIdToCmd map[uint16]string
 	blockedEvents         []bpfEvent
 	blockedEventsMutex    sync.Mutex
-	reasonMutex           sync.Mutex
-	ipDomainTracking      map[string]*DomainList
+	ipDomainTracking      *utils.GenericSyncMap[string, *DomainList]
 }
 
 func (e *DnsFirewall) BlockedEvents() []bpfEvent {
@@ -163,22 +163,10 @@ func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
 	}
 
 	if e.FirewallIPsWithReason == nil {
-		e.FirewallIPsWithReason = make(map[string]*Reason)
+		e.FirewallIPsWithReason = new(utils.GenericSyncMap[string, *Reason])
 	}
 
-	// TODO: We have a concurrent map race condition here
-	// ▼ Parallel Test (Allow): Multiple HTTPS requests
-	// 	⬇️ Command:
-	// 	curl -s --fail-with-body --output /dev/null --max-time 5 --parallel --parallel-immediate --parallel-max 10 https://google.com https://bing.com https://github.com/lawrencegripper
-	// fatal error: concurrent map writes
-
-	// goroutine 1540 [running]:
-	// github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf.(*DnsFirewall).AddIPToFirewall(0xc000292510, {0xc00020aaa0, 0xd}, 0xc0000122b8)
-	//   /workspaces/ebpf-cgroup-firewall/pkg/ebpf/ebpf.go:159 +0x29c
-	// For now mutex hack
-	e.reasonMutex.Lock()
-	e.FirewallIPsWithReason[ip] = reason
-	e.reasonMutex.Unlock()
+	e.FirewallIPsWithReason.Store(ip, reason)
 
 	return nil
 }
@@ -189,12 +177,8 @@ func (e *DnsFirewall) TrackIPToDomain(ip string, domain string) {
 	}
 
 	slog.Debug("Tracking IP to domain", "ip", ip, "domain", domain)
-	_, exists := e.ipDomainTracking[ip]
-	if !exists {
-		e.ipDomainTracking[ip] = &DomainList{}
-	}
 
-	domainList := e.ipDomainTracking[ip]
+	domainList, _ := e.ipDomainTracking.LoadOrStore(ip, &DomainList{})
 	domainList.AddDomain(domain)
 }
 
@@ -318,8 +302,8 @@ func AttachRedirectorToCGroup(
 		DnsTransactionIdToCmd: map[uint16]string{},
 		blockedEvents:         []bpfEvent{},
 		blockedEventsMutex:    sync.Mutex{},
-		reasonMutex:           sync.Mutex{},
-		ipDomainTracking:      map[string]*DomainList{},
+		ipDomainTracking:      new(utils.GenericSyncMap[string, *DomainList]),
+		FirewallIPsWithReason: new(utils.GenericSyncMap[string, *Reason]),
 	}
 
 	go ebpfFirewall.monitorRingBufferEventfunc()
@@ -369,8 +353,8 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 
 		var reasonText string
 		var explaination string
-		reason := e.FirewallIPsWithReason[intToIPHostByteOrder(event.Ip).String()]
-		if reason == nil {
+		reason, foundReason := e.FirewallIPsWithReason.Load(intToIPHostByteOrder(event.Ip).String())
+		if !foundReason {
 			if e.FirewallMethod == models.AllowList {
 				reasonText = "NotInAllowList"
 				explaination = "Domain doesn't match any allowlist prefixes"
@@ -412,6 +396,13 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 		}
 
 		ip := intToIPHostByteOrder(event.Ip)
+
+		ipResolvedForDomains := "None"
+		ipResolvedDomainList, foundDomainsForIp := e.ipDomainTracking.Load(ip.String())
+		if foundDomainsForIp {
+			ipResolvedForDomains = ipResolvedDomainList.String()
+		}
+
 		if !event.Allowed {
 			slog.Warn(
 				"Packet BLOCKED",
@@ -421,7 +412,7 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 				"originalIP", intToIPHostByteOrder(event.OriginalIp),
 				"bypassType", eventTypeString,
 				"port", event.Port,
-				"ipResolvedForDomains", e.ipDomainTracking[ip.String()].String(),
+				"ipResolvedForDomains", ipResolvedForDomains,
 				"pid", event.Pid,
 				"cmd", cmdRun,
 				"reason", reasonText,
@@ -443,7 +434,7 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 				"originalIP", intToIPHostByteOrder(event.OriginalIp),
 				"bypassType", eventTypeString,
 				"port", event.Port,
-				"ipResolvedForDomains", e.ipDomainTracking[ip.String()].String(),
+				"ipResolvedForDomains", ipResolvedForDomains,
 				"pid", event.Pid,
 				"cmd", cmdRun,
 				"firewallMethod", e.FirewallMethod.String(),
