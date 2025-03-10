@@ -20,6 +20,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
 
 type AllowKind int
@@ -46,33 +47,45 @@ func (r *Reason) KindHumanReadable() string {
 }
 
 type DomainList struct {
-	Domains []string
+	Domains *utils.GenericSyncMap[string, bool]
 }
 
 func (d *DomainList) AddDomain(domain string) {
-	d.Domains = append(d.Domains, domain)
+	if d.Domains == nil {
+		d.Domains = new(utils.GenericSyncMap[string, bool])
+	}
+	d.Domains.Store(domain, true)
 }
 
 func (d *DomainList) String() string {
 	if d == nil || d.Domains == nil {
 		return "No Domains"
 	}
-	return strings.Join(d.Domains, ",")
+
+	var result strings.Builder
+	d.Domains.Range(func(key string, value bool) bool {
+		result.WriteString(key + ", ")
+		return true
+	})
+
+	return result.String()
 }
 
 type DnsFirewall struct {
 	Spec                  *ebpf.CollectionSpec
 	Link                  *link.Link
+	SockOpsLink           *link.Link
+	EgressLink            *link.Link
 	Programs              bpfPrograms
 	Objects               *bpfObjects
-	FirewallIPsWithReason map[string]*Reason
+	FirewallIPsWithReason *utils.GenericSyncMap[string, *Reason]
 	RingBufferReader      *ringbuf.Reader
 	FirewallMethod        models.FirewallMethod
 	DnsTransactionIdToPid map[uint16]uint32
 	DnsTransactionIdToCmd map[uint16]string
 	blockedEvents         []bpfEvent
 	blockedEventsMutex    sync.Mutex
-	ipDomainTracking      map[string]*DomainList
+	ipDomainTracking      *utils.GenericSyncMap[string, *DomainList]
 }
 
 func (e *DnsFirewall) BlockedEvents() []bpfEvent {
@@ -82,6 +95,55 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 	blockedEventsCopy := make([]bpfEvent, len(e.blockedEvents))
 	copy(blockedEventsCopy, e.blockedEvents)
 	return blockedEventsCopy
+}
+
+func (e *DnsFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
+	clientSocketCookie := uint64(16)
+	err := e.Objects.bpfMaps.SrcPortToSockClient.Lookup(uint16(sourcePort), &clientSocketCookie)
+	if err != nil {
+		slog.Error("failed to lookup srcPortToSockClient map value", logger.SlogError(err), "sourcePort", sourcePort)
+		return 0, err
+	}
+
+	pid := uint32(16)
+	err = e.Objects.bpfMaps.SocketPidMap.Lookup(clientSocketCookie, &pid)
+	if err != nil {
+		slog.Error("failed to lookup socketPidMap value", logger.SlogError(err), "socketCookie", clientSocketCookie)
+		return 0, err
+	}
+
+	return pid, nil
+}
+
+func (e *DnsFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, error) {
+	maps := e.Objects.bpfMaps
+
+	// Use the source port map to get the client socket cookie
+	clientSocketCookie := uint64(16)
+	err := maps.SrcPortToSockClient.Lookup(uint16(sourcePort), &clientSocketCookie)
+	if err != nil {
+		slog.Error("failed to lookup srcPortToSockClient map value", logger.SlogError(err), "sourcePort", sourcePort)
+		return nil, 0, err
+	}
+
+	originalIPBitwise := uint32(16)
+	err = maps.SockClientToOriginalIp.Lookup(clientSocketCookie, &originalIPBitwise)
+	if err != nil {
+		slog.Error("failed to lookup sockClientToOriginalIp map value", logger.SlogError(err), "clientSocketCookie", clientSocketCookie)
+		return nil, 0, err
+	}
+
+	originalIp := models.IntToIP(originalIPBitwise)
+	originalPort := uint16(16)
+	err = maps.SockClientToOriginalPort.Lookup(clientSocketCookie, &originalPort)
+	if err != nil {
+		slog.Error("failed to lookup sockClientToOriginalPort map value", logger.SlogError(err), "clientSocketCookie", clientSocketCookie)
+		return nil, 0, err
+	}
+
+	slog.Debug("eBPF matched source port to retreive original ip and port", "sourcePort", sourcePort, "originalIP", originalIp, "originalPort", originalPort)
+
+	return originalIp, int(originalPort), nil
 }
 
 // TODO
@@ -94,20 +156,20 @@ func (e *DnsFirewall) BlockedEvents() []bpfEvent {
 // In the case where firewall is blocklist, ips added here are blocked, rest art allowed
 // In the case where firewall is allowlist, ips added here are allowed, rest are blocked
 func (e *DnsFirewall) AddIPToFirewall(ip string, reason *Reason) error {
-	slog.Debug("Adding IP to firewall_ips_map", "ip", ip)
+	slog.Debug("Adding IP to firewall_ips_map", "ip", ip, slog.String("reason", reason.Comment), slog.String("kind", reason.KindHumanReadable()))
 	firewallIps := e.Objects.bpfMaps.FirewallIpMap
 
-	err := firewallIps.Put(models.IPToInt(ip), models.IPToInt(ip))
+	err := firewallIps.Put(models.IPToIntNetworkOrder(ip), models.IPToIntNetworkOrder(ip))
 	if err != nil {
 		slog.Error("adding IP to allowed_ips_map", "error", err)
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
 	}
 
 	if e.FirewallIPsWithReason == nil {
-		e.FirewallIPsWithReason = make(map[string]*Reason)
+		e.FirewallIPsWithReason = new(utils.GenericSyncMap[string, *Reason])
 	}
 
-	e.FirewallIPsWithReason[ip] = reason
+	e.FirewallIPsWithReason.Store(ip, reason)
 
 	return nil
 }
@@ -116,19 +178,17 @@ func (e *DnsFirewall) TrackIPToDomain(ip string, domain string) {
 	if e.ipDomainTracking == nil {
 		return
 	}
-	slog.Debug("Tracking IP to domain", "ip", ip, "domain", domain)
-	_, exists := e.ipDomainTracking[ip]
-	if !exists {
-		e.ipDomainTracking[ip] = &DomainList{}
-	}
 
-	domainList := e.ipDomainTracking[ip]
+	slog.Debug("Tracking IP to domain", "ip", ip, "domain", domain)
+
+	domainList, _ := e.ipDomainTracking.LoadOrStore(ip, &DomainList{})
 	domainList.AddDomain(domain)
 }
 
-func intToIP(val uint32) net.IP {
+func intToIPHostByteOrder(val uint32) net.IP {
+	// TODO: Detect if the host system is big or little endian and do the right one
 	var bytes [4]byte
-	binary.LittleEndian.PutUint32(bytes[:], val)
+	binary.BigEndian.PutUint32(bytes[:], val)
 
 	return net.IPv4(bytes[0], bytes[1], bytes[2], bytes[3])
 }
@@ -176,7 +236,7 @@ func AttachRedirectorToCGroup(
 	// Tell the eBPF program about the DNS proxy PID so it is allowed to send requests to upstream dns servers
 	// without having them redirected back to the proxy
 	if exemptPID != 0 {
-		err = spec.Variables["const_dns_proxy_pid"].Set(uint32(exemptPID))
+		err = spec.Variables["const_proxy_pid"].Set(uint32(exemptPID))
 		if err != nil {
 			return nil, fmt.Errorf("setting const_dns_proxy_pid port variable failed: %w", err)
 		}
@@ -200,16 +260,27 @@ func AttachRedirectorToCGroup(
 		Program: obj.Connect4,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attaching eBPF program to cgroup: %w", err)
+		return nil, fmt.Errorf("attaching eBPF program Connect4 to cgroup: %w", err)
 	}
 
-	_, err = link.AttachCgroup(link.CgroupOptions{
+	// TODO store link and use it to pin
+	egressLink, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroup.Name(),
 		Attach:  ebpf.AttachCGroupInetEgress,
 		Program: obj.CgroupSkbEgress,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attaching eBPF program to cgroup: %w", err)
+		return nil, fmt.Errorf("attaching eBPF program CgroupSkbEgress to cgroup: %w", err)
+	}
+
+	// TODO store link and use it to pin
+	sockOpsLink, err := link.AttachCgroup(link.CgroupOptions{
+		Path:    cgroup.Name(),
+		Attach:  ebpf.AttachCGroupSockOps,
+		Program: obj.CgSockOps,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("attaching eBPF program CgSockOps to cgroup: %w", err)
 	}
 
 	// Open a ringbuf reader from userspace RINGBUF map described in the
@@ -220,8 +291,13 @@ func AttachRedirectorToCGroup(
 	}
 
 	ebpfFirewall := &DnsFirewall{
-		Spec:                  spec,
+		Spec: spec,
+		// WARNING: If we don't keep an active reference to the link the the program will be unloaded
+		//          and stop doing network filtering. I know we don't use these actively but you must
+		//          leave them here!
 		Link:                  &cgroupLink,
+		SockOpsLink:           &sockOpsLink,
+		EgressLink:            &egressLink,
 		Objects:               &obj,
 		RingBufferReader:      ringBufferEventsReader,
 		FirewallMethod:        firewallMethod,
@@ -229,7 +305,8 @@ func AttachRedirectorToCGroup(
 		DnsTransactionIdToCmd: map[uint16]string{},
 		blockedEvents:         []bpfEvent{},
 		blockedEventsMutex:    sync.Mutex{},
-		ipDomainTracking:      map[string]*DomainList{},
+		ipDomainTracking:      new(utils.GenericSyncMap[string, *DomainList]),
+		FirewallIPsWithReason: new(utils.GenericSyncMap[string, *Reason]),
 	}
 
 	go ebpfFirewall.monitorRingBufferEventfunc()
@@ -279,8 +356,8 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 
 		var reasonText string
 		var explaination string
-		reason := e.FirewallIPsWithReason[intToIP(event.Ip).String()]
-		if reason == nil {
+		reason, foundReason := e.FirewallIPsWithReason.Load(intToIPHostByteOrder(event.Ip).String())
+		if !foundReason {
 			if e.FirewallMethod == models.AllowList {
 				reasonText = "NotInAllowList"
 				explaination = "Domain doesn't match any allowlist prefixes"
@@ -292,19 +369,59 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 			explaination = reason.Comment
 		}
 
-		ip := intToIP(event.Ip)
+		const (
+			DNS_PROXY_PACKET_BYPASS_TYPE  = 1
+			DNS_REDIRECT_TYPE             = 11
+			LOCALHOST_PACKET_BYPASS_TYPE  = 12
+			HTTP_PROXY_PACKET_BYPASS_TYPE = 2
+			HTTP_REDIRECT_TYPE            = 22
+			PROXY_PID_BYPASS_TYPE         = 23
+		)
+
+		var eventTypeString string
+		switch event.ByPassType {
+		case DNS_PROXY_PACKET_BYPASS_TYPE:
+			eventTypeString = "dnsProxyPacket"
+		case DNS_REDIRECT_TYPE:
+			eventTypeString = "dnsRedirect"
+		case LOCALHOST_PACKET_BYPASS_TYPE:
+			eventTypeString = "localhostPacket"
+		case HTTP_PROXY_PACKET_BYPASS_TYPE:
+			eventTypeString = "httpProxyPacket"
+		case HTTP_REDIRECT_TYPE:
+			eventTypeString = "httpRedirect"
+		case PROXY_PID_BYPASS_TYPE:
+			eventTypeString = "proxyPid"
+		case 0:
+			eventTypeString = "normalPacket"
+		default:
+			panic("Unknown bypass type")
+		}
+
+		ip := intToIPHostByteOrder(event.Ip)
+
+		ipResolvedForDomains := "None"
+		ipResolvedDomainList, foundDomainsForIp := e.ipDomainTracking.Load(ip.String())
+		if foundDomainsForIp {
+			ipResolvedForDomains = ipResolvedDomainList.String()
+		}
+
 		if !event.Allowed {
 			slog.Warn(
 				"Packet BLOCKED",
 				"blockedAt", "packet",
 				"blocked", !event.Allowed,
 				"ip", ip,
-				"ipResolvedForDomains", e.ipDomainTracking[ip.String()].String(),
+				"originalIP", intToIPHostByteOrder(event.OriginalIp),
+				"bypassType", eventTypeString,
+				"port", event.Port,
+				"ipResolvedForDomains", ipResolvedForDomains,
 				"pid", event.Pid,
 				"cmd", cmdRun,
 				"reason", reasonText,
 				"explaination", explaination,
 				"firewallMethod", e.FirewallMethod.String(),
+				"redirectedByeBPF", event.HasBeenRedirected,
 			)
 
 			// Writing blocked events is nice to have, if we're locked then skip em
@@ -312,9 +429,23 @@ func (e *DnsFirewall) monitorRingBufferEventfunc() {
 			e.blockedEventsMutex.Lock()
 			e.blockedEvents = append(e.blockedEvents, event)
 			e.blockedEventsMutex.Unlock()
+		} else if logger.ShowDebugLogs {
+			slog.Debug(
+				"Packet allowed",
+				"blocked", !event.Allowed,
+				"ip", ip,
+				"originalIP", intToIPHostByteOrder(event.OriginalIp),
+				"bypassType", eventTypeString,
+				"port", event.Port,
+				"ipResolvedForDomains", ipResolvedForDomains,
+				"pid", event.Pid,
+				"cmd", cmdRun,
+				"firewallMethod", e.FirewallMethod.String(),
+				"redirectedByeBPF", event.HasBeenRedirected,
+			)
 		}
 
-		if event.IsDns {
+		if event.ByPassType == 1 || event.ByPassType == 11 {
 			if event.DnsTransactionId != 0 {
 				e.DnsTransactionIdToPid[event.DnsTransactionId] = event.Pid
 				e.DnsTransactionIdToCmd[event.DnsTransactionId] = cmdRun

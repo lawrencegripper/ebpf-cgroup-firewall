@@ -13,23 +13,17 @@ import (
 )
 
 type bpfEvent struct {
-	Pid              uint32
-	Port             uint16
-	Allowed          bool
-	_                [1]byte
-	Ip               uint32
-	OriginalIp       uint32
-	IsDns            bool
-	_                [1]byte
-	DnsTransactionId uint16
-	PidResolved      bool
-	_                [3]byte
-}
-
-type bpfSvcAddr struct {
-	Addr uint32
-	Port uint16
-	_    [2]byte
+	Pid               uint32
+	Port              uint16
+	Allowed           bool
+	_                 [1]byte
+	Ip                uint32
+	OriginalIp        uint32
+	ByPassType        uint16
+	DnsTransactionId  uint16
+	PidResolved       bool
+	HasBeenRedirected bool
+	_                 [2]byte
 }
 
 // loadBpf returns the embedded CollectionSpec for bpf.
@@ -73,6 +67,7 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
+	CgSockOps       *ebpf.ProgramSpec `ebpf:"cg_sock_ops"`
 	CgroupSkbEgress *ebpf.ProgramSpec `ebpf:"cgroup_skb_egress"`
 	Connect4        *ebpf.ProgramSpec `ebpf:"connect4"`
 	Getpeername4    *ebpf.ProgramSpec `ebpf:"getpeername4"`
@@ -82,10 +77,12 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	Events         *ebpf.MapSpec `ebpf:"events"`
-	FirewallIpMap  *ebpf.MapSpec `ebpf:"firewall_ip_map"`
-	ServiceMapping *ebpf.MapSpec `ebpf:"service_mapping"`
-	SocketPidMap   *ebpf.MapSpec `ebpf:"socket_pid_map"`
+	Events                   *ebpf.MapSpec `ebpf:"events"`
+	FirewallIpMap            *ebpf.MapSpec `ebpf:"firewall_ip_map"`
+	SockClientToOriginalIp   *ebpf.MapSpec `ebpf:"sock_client_to_original_ip"`
+	SockClientToOriginalPort *ebpf.MapSpec `ebpf:"sock_client_to_original_port"`
+	SocketPidMap             *ebpf.MapSpec `ebpf:"socket_pid_map"`
+	SrcPortToSockClient      *ebpf.MapSpec `ebpf:"src_port_to_sock_client"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -107,18 +104,22 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	Events         *ebpf.Map `ebpf:"events"`
-	FirewallIpMap  *ebpf.Map `ebpf:"firewall_ip_map"`
-	ServiceMapping *ebpf.Map `ebpf:"service_mapping"`
-	SocketPidMap   *ebpf.Map `ebpf:"socket_pid_map"`
+	Events                   *ebpf.Map `ebpf:"events"`
+	FirewallIpMap            *ebpf.Map `ebpf:"firewall_ip_map"`
+	SockClientToOriginalIp   *ebpf.Map `ebpf:"sock_client_to_original_ip"`
+	SockClientToOriginalPort *ebpf.Map `ebpf:"sock_client_to_original_port"`
+	SocketPidMap             *ebpf.Map `ebpf:"socket_pid_map"`
+	SrcPortToSockClient      *ebpf.Map `ebpf:"src_port_to_sock_client"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.Events,
 		m.FirewallIpMap,
-		m.ServiceMapping,
+		m.SockClientToOriginalIp,
+		m.SockClientToOriginalPort,
 		m.SocketPidMap,
+		m.SrcPortToSockClient,
 	)
 }
 
@@ -126,6 +127,7 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
+	CgSockOps       *ebpf.Program `ebpf:"cg_sock_ops"`
 	CgroupSkbEgress *ebpf.Program `ebpf:"cgroup_skb_egress"`
 	Connect4        *ebpf.Program `ebpf:"connect4"`
 	Getpeername4    *ebpf.Program `ebpf:"getpeername4"`
@@ -133,6 +135,7 @@ type bpfPrograms struct {
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
+		p.CgSockOps,
 		p.CgroupSkbEgress,
 		p.Connect4,
 		p.Getpeername4,

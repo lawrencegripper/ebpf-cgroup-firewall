@@ -35,6 +35,16 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.Dn
 	}
 	downstreamServerAddr := config.Servers[0] + ":" + config.Port
 	slog.Debug("Using downstream DNS resolver", "address", downstreamServerAddr)
+	if firewall.FirewallMethod == models.AllowList {
+		err := firewall.AddIPToFirewall(config.Servers[0], &ebpf.Reason{
+			Kind:    ebpf.FromDnsRequest,
+			Comment: "when configured as allow list ensure we can call downstream dns server",
+		})
+		if err != nil {
+			slog.Error("Failed to add downstream dns server to allow list", logger.SlogError(err))
+			return nil, fmt.Errorf("failed to add downstream dns server to allow list: %w", err)
+		}
+	}
 
 	serverHandler := &blockingDNSHandler{
 		firewallDomains:           domains,
@@ -155,6 +165,8 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Compress = false
 	m.Authoritative = true
 
+	// Somehow need to get at the udp private field on the w dns writer
+
 	for _, q := range r.Question {
 		domainMatchedFirewallDomains := false
 		matchedBecause := ""
@@ -178,8 +190,12 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 		}
 
-		if !b.allowDNSRequestForBlocked {
-			if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.AllowList {
+		requestIsNotAllowed := false
+
+		if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.AllowList {
+			if b.allowDNSRequestForBlocked {
+				requestIsNotAllowed = true
+			} else {
 				m.Rcode = dns.RcodeRefused
 				if err := w.WriteMsg(m); err != nil {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
@@ -198,8 +214,12 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				)
 				return
 			}
+		}
 
-			if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.BlockList {
+		if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.BlockList {
+			if b.allowDNSRequestForBlocked {
+				requestIsNotAllowed = true
+			} else {
 				m.Rcode = dns.RcodeRefused
 				if err := w.WriteMsg(m); err != nil {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
@@ -209,24 +229,30 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
 
 				slog.Warn("DNS BLOCKED",
-					"reason", "FromDNSRequest",
+					"reason", "InBlockList",
 					"explaination", explaination,
 					"blocked", true,
 					"blockedAt", "dns",
 					"domain", q.Name,
 					"pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
 					"cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
-					"firewallMethod", b.dnsFirewall.FirewallMethod.String(),
-				)
+					"firewallMethod", b.dnsFirewall.FirewallMethod.String())
 				return
 			}
+		}
+		if requestIsNotAllowed && b.allowDNSRequestForBlocked {
+			slog.Debug(
+				"DNS request which would have been blocked was allowed due to --allow-dns-request",
+				"domain", q.Name,
+				"firewallMethod", b.dnsFirewall.FirewallMethod.String(),
+			)
 		}
 
 		resp, _, err := b.downstreamClient.Exchange(r, b.DownstreamServerAddr)
 		if err != nil {
 			slog.Warn("Failed to resolve from downstream", logger.SlogError(err), "domain", q.Name, "downstream server", b.DownstreamServerAddr)
 			m.Rcode = dns.RcodeServerFailure
-			panic(err)
+			return
 		}
 		m.Answer = append(m.Answer, resp.Answer...)
 
@@ -239,8 +265,9 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		if b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.LogOnly {
 			// Do nothing
-		} else if domainMatchedFirewallDomains {
-			if b.dnsFirewall != nil {
+		} else {
+			//                         👇 Don't add the ip if we're allowing dns requests for blocked stuff
+			if b.dnsFirewall != nil && !requestIsNotAllowed {
 				// If it did match add the IPs to the firewall ip list
 				// the matching already decided on the firewall method (allow, block)
 				for _, answer := range resp.Answer {

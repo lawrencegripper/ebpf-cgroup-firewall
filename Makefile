@@ -19,10 +19,7 @@ check-generate: generate ## Check if generate target causes any changes.
 
 
 .PHONY: build
-build: ## Build the tool
-	@if [ -n "$$(git status --porcelain pkg/ebpf/bpf.c)" ]; then \
-		$(MAKE) generate; \
-	fi
+build: generate ## Build the tool
 	go build -v -o bin/ebpf-cgroup-firewall ./cmd/main.go
 
 .PHONY: test
@@ -37,5 +34,9 @@ lint:
 smoketest: build ## Run the smoke test
 	./script/smoke-test.sh
 
+.PHONY: soaktest
+soaktest: build ## Run the soak test suite (15min duration)
+	./script/soak-test.sh
+
 .PHONY: ci
-ci: lint generate test smoketest ## Run CI (lint, generate, test, smoketest)
+ci: lint generate smoketest ## Run CI (lint, generate, test, smoketest)

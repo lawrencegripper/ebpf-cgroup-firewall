@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/proxy"
 	"github.com/moby/sys/mountinfo"
 )
 
@@ -101,7 +103,7 @@ func main() {
 		firewallList = blockList
 	}
 
-	firewallIps, firewallDomains := splitDomainAndIPListByType(firewallList)
+	firewallIps, firewallDomains, firewallUrls := splitDomainUrlOrIPListByType(firewallList)
 
 	// get a port for the DNS server
 	dnsPort, err := dns.FindUnusedPort()
@@ -112,6 +114,8 @@ func main() {
 	// Actions should already be running the worker in a cgroup so we can just attach to that
 	// first find it:
 	pathToCGroupToRunIn := GetCGroupForCurrentProcess()
+	slog.Debug("Running in cgroup", "cgroup", pathToCGroupToRunIn)
+	slog.Debug("Pid for our process is", "pid", os.Getpid())
 	var ebpfFirewall *ebpf.DnsFirewall
 	var wrapper *cgroup.CGroupWrapper
 	if attach {
@@ -132,8 +136,9 @@ func main() {
 			slog.Error("Failed to create cgroup", logger.SlogError(err))
 			os.Exit(302)
 		}
+		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			wrapper.Path, dnsPort, 0, firewallMethod)
+			wrapper.Path, dnsPort, ignoreCurrentPid, firewallMethod)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
@@ -151,16 +156,6 @@ func main() {
 		os.Exit(101)
 	}
 
-	// Allow calls to localhost and upstream dns server
-	if firewallMethod == models.AllowList {
-		// TODO: This is pretty permissive, probably this should be an option for uesrs to decide on
-		err = ebpfFirewall.AddIPToFirewall("127.0.0.1", &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: "Allow localhost"})
-		if err != nil {
-			slog.Error("Failed to allow localhost", logger.SlogError(err))
-			os.Exit(108)
-		}
-	}
-
 	// Add explicitly allowed ips
 	for _, ip := range firewallIps {
 		comment := "Blocked IP as on explicit block list"
@@ -174,6 +169,9 @@ func main() {
 	}
 
 	slog.Debug("DNS monitoring proxy started successfully")
+
+	// Start http proxy
+	proxy.Start(ebpfFirewall, dns, firewallDomains, firewallUrls)
 
 	// If we're not attaching then we need to run the command in the cgroup
 	if attach {
@@ -214,9 +212,10 @@ func main() {
 	}
 }
 
-func splitDomainAndIPListByType(allowList []string) ([]string, []string) {
+func splitDomainUrlOrIPListByType(allowList []string) ([]string, []string, []string) {
 	var ips []string
 	var domains []string
+	var urls []string
 
 	for _, item := range allowList {
 		// Simple IP check - looks for dots and numbers
@@ -239,10 +238,30 @@ func splitDomainAndIPListByType(allowList []string) ([]string, []string) {
 				continue
 			}
 		}
+
+		// Is it a url?
+		// TODO: Can we do better detection?
+		if strings.Contains(item, "://") {
+			parsedUrl, err := url.Parse(item)
+			if err != nil {
+				slog.Error("Failed to parse URL", "url", item, logger.SlogError(err))
+				panic(err)
+			}
+			urls = append(urls, item)
+			// If a url is enabled enable that domain
+			domains = append(domains, parsedUrl.Host)
+			continue
+		}
+
+		// If not hen it's a domain
 		domains = append(domains, item)
+		// If a domain is added automatically enable all urls under that domain on http and https
+		// TODO: Document this logic
+		urls = append(urls, fmt.Sprintf("http://%s", item))
+		urls = append(urls, fmt.Sprintf("https://%s", item))
 	}
 
-	return ips, domains
+	return ips, domains, urls
 }
 
 func GetCGroupForCurrentProcess() string {
