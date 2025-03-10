@@ -114,7 +114,7 @@ attach_container_firewall_test() {
     echo "attach --docker-container $container_id $args; then execute \"$cmd\" in current cgroup" | $indent_twice
 
     log_file="/tmp/firewall-${RANDOM}.json"
-    ./bin/ebpf-cgroup-firewall attach --docker-container $container_id --log-file $log_file $args &
+    sudo ./bin/ebpf-cgroup-firewall attach --docker-container $container_id --log-file $log_file $args &
     pid=$!
 
     if ! ps -p $pid > /dev/null; then
@@ -128,9 +128,8 @@ attach_container_firewall_test() {
     sleep 4
 
     set +e
-    echo "docker output:"
-    docker exec -i -t $container_name "/bin/bash" "-c" "echo 1"
-    docker exec -i -t $container_name "/bin/bash" "-c" "curl google.com"
+    echo "Docker exec output:"
+    docker exec -i $container_name "/bin/bash" "-c" "$cmd"
     exitCode=$?
     set -e
 

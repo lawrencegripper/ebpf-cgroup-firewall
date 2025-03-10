@@ -23,6 +23,15 @@ jobs:
         push: never
         runCmd: make ci
     
+    - name: Install mkcert
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libnss3-tools
+        curl -JLO "https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64"
+        chmod +x mkcert-v*-linux-amd64
+        sudo mv mkcert-v*-linux-amd64 /usr/local/bin/mkcert
+        mkcert -install
+
     # These tests can't be run in the devcontainer as rely on the host cgroup mapping for docker attach
     - name: Run host only smoketests
-      run: make ./script/smoke-test-host.sh
+      run: ./script/smoke-test-host.sh

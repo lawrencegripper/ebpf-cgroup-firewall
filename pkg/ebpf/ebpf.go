@@ -82,8 +82,8 @@ type EgressFirewall struct {
 	FirewallIPsWithReason *utils.GenericSyncMap[string, *Reason]
 	RingBufferReader      *ringbuf.Reader
 	FirewallMethod        models.FirewallMethod
-	DnsTransactionIdToPid map[uint16]uint32
-	DnsTransactionIdToCmd map[uint16]string
+	DnsTransactionIdToPid *utils.GenericSyncMap[uint16, uint32]
+	DnsTransactionIdToCmd *utils.GenericSyncMap[uint16, string]
 	blockedEvents         []bpfEvent
 	blockedEventsMutex    sync.Mutex
 	ipDomainTracking      *utils.GenericSyncMap[string, *DomainList]
@@ -329,8 +329,8 @@ func AttachRedirectorToCGroup(
 		Objects:               &obj,
 		RingBufferReader:      ringBufferEventsReader,
 		FirewallMethod:        firewallMethod,
-		DnsTransactionIdToPid: map[uint16]uint32{},
-		DnsTransactionIdToCmd: map[uint16]string{},
+		DnsTransactionIdToPid: new(utils.GenericSyncMap[uint16, uint32]),
+		DnsTransactionIdToCmd: new(utils.GenericSyncMap[uint16, string]),
 		blockedEvents:         []bpfEvent{},
 		blockedEventsMutex:    sync.Mutex{},
 		ipDomainTracking:      new(utils.GenericSyncMap[string, *DomainList]),
@@ -475,8 +475,8 @@ func (e *EgressFirewall) monitorRingBufferEventfunc() {
 
 		if event.ByPassType == 1 || event.ByPassType == 11 {
 			if event.DnsTransactionId != 0 {
-				e.DnsTransactionIdToPid[event.DnsTransactionId] = event.Pid
-				e.DnsTransactionIdToCmd[event.DnsTransactionId] = cmdRun
+				e.DnsTransactionIdToPid.Store(event.DnsTransactionId, event.Pid)
+				e.DnsTransactionIdToCmd.Store(event.DnsTransactionId, cmdRun)
 			}
 		}
 	}
