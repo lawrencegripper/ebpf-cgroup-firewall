@@ -129,7 +129,7 @@ func main() {
 		firewallList = blockList
 	}
 
-	firewallIps, firewallDomains, firewallUrls := splitDomainUrlOrIPListByType(firewallList)
+	firewallIps, firewallDomains, firewallUrls := splitDomainUrlOrIPListByType(firewallMethod, firewallList)
 
 	// get a port for the DNS server
 	dnsPort, err := dns.FindUnusedPort()
@@ -238,7 +238,7 @@ func main() {
 	}
 }
 
-func splitDomainUrlOrIPListByType(allowList []string) ([]string, []string, []string) {
+func splitDomainUrlOrIPListByType(firewallMethod models.FirewallMethod, allowList []string) ([]string, []string, []string) {
 	var ips []string
 	var domains []string
 	var urls []string
@@ -274,8 +274,15 @@ func splitDomainUrlOrIPListByType(allowList []string) ([]string, []string, []str
 				panic(err)
 			}
 			urls = append(urls, item)
-			// If a url is enabled enable that domain
-			domains = append(domains, parsedUrl.Host)
+			// TODO: Shift this logic into the dns proxy or firewall
+			if firewallMethod == models.AllowList {
+				slog.Debug("Adding domain to allow list because of url rule", "domain", parsedUrl.Host)
+				domains = append(domains, parsedUrl.Host)
+			} else if firewallMethod == models.BlockList {
+				// Don't add the domain as this would cause it to get blocked
+				// at the dns level before the http proxy could inspect the request
+				slog.Debug("Not adding domain to block list (url rule)", "domain", parsedUrl.Host)
+			}
 			continue
 		}
 

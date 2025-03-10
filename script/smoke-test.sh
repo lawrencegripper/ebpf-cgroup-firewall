@@ -75,9 +75,9 @@ close_fold
 
 open_fold "Parallel Test (Block): Multiple HTTPS requests with specific URLs"
     run_firewall_test "--allow-dns-request --block-list https://github.com/lawrencegripper,https://github.com/github" "curl --parallel --parallel-immediate --parallel-max 10 https://github.com/lawrencegripper $default_curl_args https://github.com/github $default_curl_args"
-    assert_exit_code 28
+    assert_exit_code 22
     assert_output_contains "blocked"
-    assert_output_contains "Packet BLOCKED blockedAt=packet"
+    assert_output_contains "WARN HTTP BLOCKED reason=InBlockList"
 close_fold
 
 open_fold "BlockList: Block https google. (Allow DNS)"
@@ -85,6 +85,11 @@ open_fold "BlockList: Block https google. (Allow DNS)"
     assert_exit_code 28
     assert_output_contains "blocked"
     assert_output_contains 'Packet BLOCKED blockedAt=packet'
+close_fold
+
+open_fold "BlockList: block https://www.bbc.co.uk/news/world but hit https://www.bbc.co.uk/news/uk"
+    run_firewall_test "--block-list https://www.bbc.co.uk/news/uk" "curl $default_curl_args https://www.bbc.co.uk/news/world"
+    assert_exit_code 0
 close_fold
 
 open_fold "BlockList: Block google"
