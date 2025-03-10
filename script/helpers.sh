@@ -76,7 +76,7 @@ attach_firewall_test() {
     echo "attach $args; then execute \"$cmd\" in current cgroup" | $indent_twice
 
     log_file="/tmp/firewall-${RANDOM}.json"
-    ./bin/ebpf-cgroup-firewall attach --log-file $log_file $args &
+    ./bin/ebpf-cgroup-firewall attach --log-file "$log_file" $args &
     pid=$!
 
     if ! ps -p $pid > /dev/null; then
@@ -107,14 +107,14 @@ attach_container_firewall_test() {
     local cmd="$2"
 
     # Start a container to attach to
-    local container_name="attach-con-$RANDOM"
-    local container_id=$(docker run --name=$container_name -d -it ghcr.io/curl/curl-container/curl-dev-debian:master sleep 10000)
+    container_name="attach-con-$RANDOM"
+    container_id=$(docker run --name=$container_name -d -it ghcr.io/curl/curl-container/curl-dev-debian:master sleep 10000)
 
     echo -e "\033[0;96m⬇️ Command:\033[0m" | $indent_once
     echo "attach --docker-container $container_id $args; then execute \"$cmd\" in current cgroup" | $indent_twice
 
     log_file="/tmp/firewall-${RANDOM}.json"
-    sudo ./bin/ebpf-cgroup-firewall attach --docker-container $container_id --log-file $log_file $args &
+    ./bin/ebpf-cgroup-firewall attach --debug --log-file "$log_file" --docker-container "$container_name" $args &
     pid=$!
 
     if ! ps -p $pid > /dev/null; then
@@ -137,5 +137,5 @@ attach_container_firewall_test() {
 
     kill $pid || echo "Process failed"
     docker rm -f $container_name || echo "Failed to remove container"
-    sudo rm $log_file || echo "Failed to tidy up log file" # tidy up
+    rm $log_file || echo "Failed to tidy up log file" # tidy up
 }

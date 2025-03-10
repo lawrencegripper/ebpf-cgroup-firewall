@@ -34,4 +34,4 @@ jobs:
 
     # These tests can't be run in the devcontainer as rely on the host cgroup mapping for docker attach
     - name: Run host only smoketests
-      run: ./script/smoke-test-host.sh
+      run: sudo ./script/smoke-test-host.sh
