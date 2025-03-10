@@ -133,9 +133,9 @@ attach_container_firewall_test() {
     exitCode=$?
     set -e
 
+    cmdOutput=$(cat "$log_file")
+
     kill $pid || echo "Process failed"
     docker rm -f $container_name || echo "Failed to remove container"
-
-    cmdOutput=$(cat "$log_file")
-    rm $log_file # tidy up
+    sudo rm $log_file || echo "Failed to tidy up log file" # tidy up
 }
