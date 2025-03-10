@@ -38,7 +38,7 @@ echo "Firewall pid: $pid"
 
 while [ $SECONDS -lt $end_time ]; do
     open_fold "Parallel Test (Allow): Multiple HTTPS requests to allowed endpoints"
-        run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://google.com https://bing.com https://bbc.co.uk/news/politics"
+        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://google.com https://bing.com https://bbc.co.uk/news/politics"
         assert_exit_code 0
     close_fold
 
