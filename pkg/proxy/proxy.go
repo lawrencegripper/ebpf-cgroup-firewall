@@ -89,15 +89,18 @@ func (l *Logger) Printf(format string, v ...interface{}) {
 	// slog.Debug("goproxy logs: " + output)
 }
 
-func Start(firewall *ebpf.EgressFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) {
-	// TODO Make this dynamic and map to const in ebpf so we don't overlap with used ports
-	http_addr := ":6775"
-	https_addr := ":6776"
+type ProxyServer struct {
+	HTTPPort  int
+	HTTPSPort int
+	server    *http.Server
+}
 
+// Start starts both HTTP and HTTPS proxies and returns the ports they're listening on
+func Start(httpPort, httpsPort int, firewall *ebpf.EgressFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) (*ProxyServer, error) {
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = logger.ShowDebugLogs
 	if proxy.Verbose {
-		slog.Debug("Server starting up! - configured to listen on http interface %s and https interface %s", http_addr, https_addr)
+		slog.Debug("Server starting up!", "http_port", httpPort, "https_port", httpsPort)
 	}
 
 	proxy.Logger = &Logger{}
@@ -250,21 +253,24 @@ func Start(firewall *ebpf.EgressFirewall, dnsProxy *dns.DNSProxy, firewallDomain
 		proxy.ServeHTTP(w, req)
 	})
 
+	proxyServer := &ProxyServer{
+		HTTPPort:  httpPort,
+		HTTPSPort: httpsPort,
+	}
+
 	go func() {
-		server := http.Server{
-			Addr:        http_addr,
+		server := &http.Server{
+			Addr:        fmt.Sprintf(":%d", httpPort),
 			ConnContext: SaveConnInContext,
 			Handler:     proxy,
 		}
-
+		proxyServer.server = server
 		log.Fatalln(server.ListenAndServe())
 	}()
 
 	// Handle https requests sent to the proxy through transparent redirect
-	// convert them to look like CONNECT requests that would be sent to the proxy by
-	// client configured to use it
 	go func() {
-		ln, err := net.Listen("tcp", https_addr)
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", httpsPort))
 		if err != nil {
 			slog.Error("Error listening for https connections", logger.SlogError(err))
 			panic(err)
@@ -275,47 +281,51 @@ func Start(firewall *ebpf.EgressFirewall, dnsProxy *dns.DNSProxy, firewallDomain
 				slog.Error("Error accepting new connection", logger.SlogError(err))
 				continue
 			}
-			go func(c net.Conn) {
-				tlsConn, err := vhost.TLS(c)
-
-				_, port := getOriginalIpAndPortFromConn(tlsConn.Conn, firewall)
-				if port == 0 {
-					// TODO: Why is this needed?
-					// I think we messed up the port mapping from src port somewhere in ebpf
-					slog.Warn("Failed to get port for request")
-					port = 443
-				}
-
-				if err != nil {
-					slog.Error("Error accepting new connection", logger.SlogError(err), slog.String("remoteAddr", c.RemoteAddr().String()))
-				}
-				if tlsConn.Host() == "" {
-					slog.Error("Cannot support non-SNI enabled clients", slog.String("remoteAddr", c.RemoteAddr().String()))
-					return
-				}
-
-				connectReq := &http.Request{
-					Method: http.MethodConnect,
-					URL: &url.URL{
-						Opaque: tlsConn.Host(),
-						Host:   net.JoinHostPort(tlsConn.Host(), fmt.Sprint(port)),
-					},
-					Host:       tlsConn.Host(),
-					Header:     make(http.Header),
-					RemoteAddr: c.RemoteAddr().String(),
-				}
-
-				// TODO: Hack around tracking conn for tls as transparent proxy loses ctx between requests
-				sourcePort := sourcePortFromConn(tlsConn.Conn)
-				TLSSourcePortToConn[sourcePort] = tlsConn.Conn
-
-				ctx := context.Background()
-				connectReq = connectReq.WithContext(SaveConnInContext(ctx, tlsConn.Conn))
-				resp := dumbResponseWriter{tlsConn}
-				proxy.ServeHTTP(resp, connectReq)
-			}(c)
+			go handleHTTPSConnection(c, proxy, firewall)
 		}
 	}()
+
+	return proxyServer, nil
+}
+
+func handleHTTPSConnection(c net.Conn, proxy *goproxy.ProxyHttpServer, firewall *ebpf.EgressFirewall) {
+	tlsConn, err := vhost.TLS(c)
+
+	_, port := getOriginalIpAndPortFromConn(tlsConn.Conn, firewall)
+	if port == 0 {
+		// TODO: Why is this needed?
+		// I think we messed up the port mapping from src port somewhere in ebpf
+		slog.Warn("Failed to get port for request")
+		port = 443
+	}
+
+	if err != nil {
+		slog.Error("Error accepting new connection", logger.SlogError(err), slog.String("remoteAddr", c.RemoteAddr().String()))
+	}
+	if tlsConn.Host() == "" {
+		slog.Error("Cannot support non-SNI enabled clients", slog.String("remoteAddr", c.RemoteAddr().String()))
+		return
+	}
+
+	connectReq := &http.Request{
+		Method: http.MethodConnect,
+		URL: &url.URL{
+			Opaque: tlsConn.Host(),
+			Host:   net.JoinHostPort(tlsConn.Host(), fmt.Sprint(port)),
+		},
+		Host:       tlsConn.Host(),
+		Header:     make(http.Header),
+		RemoteAddr: c.RemoteAddr().String(),
+	}
+
+	// TODO: Hack around tracking conn for tls as transparent proxy loses ctx between requests
+	sourcePort := sourcePortFromConn(tlsConn.Conn)
+	TLSSourcePortToConn[sourcePort] = tlsConn.Conn
+
+	ctx := context.Background()
+	connectReq = connectReq.WithContext(SaveConnInContext(ctx, tlsConn.Conn))
+	resp := dumbResponseWriter{tlsConn}
+	proxy.ServeHTTP(resp, connectReq)
 }
 
 // getPidFromContextOrSrcPort is a helper method to get the pid from the request
@@ -423,4 +433,12 @@ func (dumb dumbResponseWriter) WriteHeader(code int) {
 
 func (dumb dumbResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return dumb, bufio.NewReadWriter(bufio.NewReader(dumb), bufio.NewWriter(dumb)), nil
+}
+
+// Shutdown gracefully shuts down the proxy server
+func (p *ProxyServer) Shutdown(ctx context.Context) error {
+	if p.server != nil {
+		return p.server.Shutdown(ctx)
+	}
+	return nil
 }

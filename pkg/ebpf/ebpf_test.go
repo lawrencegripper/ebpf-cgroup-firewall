@@ -48,7 +48,7 @@ func TestAttachRedirectorToCGroup_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0, models.LogOnly, false)
+			_, err := AttachRedirectorToCGroup(tt.cGroupPath, 0, 0, tt.dnsProxyPort, os.Getpid(), models.LogOnly, false)
 			assert.EqualError(t, err, tt.expectedError)
 		})
 	}
@@ -66,7 +66,7 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 			name:               "AllowList: Allows Request 1.1.1.1 when its allowed",
 			firewallMode:       models.AllowList,
 			allowedFirewallIPs: "1.1.1.1",
-			attemptCommand:     "curl -sL --max-time 2 1.1.1.1",
+			attemptCommand:     "curl -sL --max-time 2 http://1.1.1.1",
 			expectError:        false,
 		},
 		{
@@ -107,7 +107,7 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 			cgroupMan, cgroupPath := createTestCGroup(t)
 
 			redirectDNSToPort := 55555
-			firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, tt.firewallMode, false)
+			firewall, err := AttachRedirectorToCGroup(cgroupPath, 6775, 6776, redirectDNSToPort, os.Getpid(), tt.firewallMode, false)
 			require.NoError(t, err)
 
 			// Start a http server to act as http proxy server would
@@ -178,7 +178,7 @@ func TestAttachRedirectorToCGroup_Blocks_All_IPv6(t *testing.T) {
 	_, cgroupPath := createTestCGroup(t)
 
 	redirectDNSToPort := 55555
-	_, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, models.AllowList, false)
+	_, err := AttachRedirectorToCGroup(cgroupPath, 0, 0, redirectDNSToPort, os.Getpid(), models.AllowList, false)
 	require.NoError(t, err)
 
 	// Start a http server on IPv6
@@ -231,7 +231,7 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	cgroupPathForCurrentProcess := getCurrentCGroup()
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0, models.AllowList, false)
+	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, 0, 0, redirectDNSToPort, os.Getpid(), models.AllowList, false)
 	require.NoError(t, err)
 
 	err = firewall.AddIPToFirewall("127.0.0.1", &Reason{})

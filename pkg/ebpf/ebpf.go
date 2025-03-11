@@ -220,6 +220,8 @@ func intToIPHostByteOrder(val uint32) net.IP {
 //   - exemptPID: The PID of the DNS proxy process that should be exempt from redirection to allow calling upstream dns server.
 func AttachRedirectorToCGroup(
 	cGroupPath string,
+	httpProxyPort int,
+	httpsProxyPort int,
 	dnsProxyPort int,
 	exemptPID int,
 	firewallMethod models.FirewallMethod,
@@ -236,6 +238,17 @@ func AttachRedirectorToCGroup(
 	spec, err := loadBpf()
 	if err != nil {
 		return nil, fmt.Errorf("loading networkblock spec: %w", err)
+	}
+
+	// Pass through port configuration for the proxies
+	err = spec.Variables["const_http_proxy_port"].Set(uint32(httpProxyPort))
+	if err != nil {
+		return nil, fmt.Errorf("setting const_http_proxy_port variable failed: %w", err)
+	}
+
+	err = spec.Variables["const_https_proxy_port"].Set(uint32(httpsProxyPort))
+	if err != nil {
+		return nil, fmt.Errorf("setting const_https_proxy_port variable failed: %w", err)
 	}
 
 	// TODO: Make this detection better. Use the docker sdk to find containers and compare to the cgroup path

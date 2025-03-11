@@ -122,13 +122,12 @@ struct
 /* DNS Proxy Port - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy */
 volatile const __u32 const_dns_proxy_port;
 /* DNS Proxy PID - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy
-    It prevents a circular dependency where the DNS proxy is trying to resolve the DNS query with the upstream
     server.
 */
 volatile const __u32 const_proxy_pid;
 
-volatile const __u16 const_http_proxy_port = 6775;
-volatile const __u16 const_https_proxy_port = 6776;
+volatile const __u32 const_http_proxy_port;
+volatile const __u32 const_https_proxy_port;
 
 // volatile const __u32 const_;
 // volatile const __u32 const_dns_proxy_pid;
@@ -179,18 +178,11 @@ int connect4(struct bpf_sock_addr *ctx)
     // Convert to host byte order from network byte order
     __u16 original_port = bpf_ntohs(ctx->user_port);
 
-    // TODO: This shoul detect if the packet shape is HTTPish rather than relying on ports
+     // TODO: This shoul detect if the packet shape is HTTPish rather than relying on ports
     bool isHttpOrHttpsPort = ctx->user_port == bpf_htons(80) || ctx->user_port == bpf_htons(443);
     if (isHttpOrHttpsPort)
     {
         didRedirect = true;
-        // /* Store the original destination so we can map it back when a response is received */
-        // orig = bpf_sk_storage_get(&service_mapping, ctx->sk, 0, BPF_SK_STORAGE_GET_F_CREATE);
-        // if (!orig)
-        //     return 0;
-
-        // orig->addr = ctx->user_ip4;
-        // orig->port = ctx->user_port;
 
         /* This is the hexadecimal representation of 127.0.0.1 address */
         ctx->user_ip4 = const_mitm_proxy_address;
@@ -198,11 +190,11 @@ int connect4(struct bpf_sock_addr *ctx)
         // TODO: Determine if the connection is https and send by taking a look at it
         // rather than relying on ports
         if (ctx->user_port == bpf_htons(80)) {
-            ctx->user_port = bpf_htons(6775);
+            ctx->user_port = bpf_htons(const_http_proxy_port);
         }
 
         if (ctx->user_port == bpf_htons(443)) {
-            ctx->user_port = bpf_htons(6776);
+            ctx->user_port = bpf_htons(const_https_proxy_port);
         }
 
         struct event info = {
@@ -211,13 +203,14 @@ int connect4(struct bpf_sock_addr *ctx)
             .port = bpf_ntohs(ctx->user_port),
             .allowed = true,
             .ip = bpf_ntohl(ctx->user_ip4),
-            .originalIp = orig->addr,
+            .originalIp = original_ip,
             .byPassType = HTTP_REDIRECT_TYPE,
+            .hasBeenRedirected = true,
         };
 
         bpf_ringbuf_output(&events, &info, sizeof(info), 0);
     } else if (ctx->user_port == bpf_htons(53)) {
-        /* For DNS Query (*:53) rewire service to backend 127.0.0.1:8853. */
+        /* For DNS Query (*:53) rewire service to backend 127.0.0.1:const_dns_proxy_port */
         didRedirect = true;
 
         /* This is the hexadecimal representation of 127.0.0.1 address */
@@ -230,8 +223,9 @@ int connect4(struct bpf_sock_addr *ctx)
             .port = bpf_ntohs(ctx->user_port),
             .allowed = true,
             .ip = bpf_ntohl(ctx->user_ip4),
-            .originalIp = orig->addr,
+            .originalIp = original_ip,
             .byPassType = DNS_REDIRECT_TYPE,
+            .hasBeenRedirected = true,
         };
 
         bpf_ringbuf_output(&events, &info, sizeof(info), 0);

@@ -7,6 +7,7 @@ import (
 
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -99,7 +100,7 @@ func TestDNSProxy_Shutdown(t *testing.T) {
 }
 
 func TestFindUnusedPort(t *testing.T) {
-	port, err := FindUnusedPort()
+	port, err := utils.FindUnusedPort()
 	require.NoError(t, err)
 	assert.NotEqual(t, 0, port)
 
