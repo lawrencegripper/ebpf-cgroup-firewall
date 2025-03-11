@@ -149,7 +149,7 @@ func main() {
 		// then attach the eBPF program to it
 		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			cgroupPath, dnsPort, ignoreCurrentPid, firewallMethod, false)
+			cgroupPath, dnsPort, ignoreCurrentPid, firewallMethod, attachingToDockerContainer)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
