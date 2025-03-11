@@ -7,6 +7,7 @@ import (
 
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -17,7 +18,7 @@ import (
 func mockedBlockingFirewall(t *testing.T) *ebpf.MockDnsFirewall {
 	blockingFirewall := ebpf.NewMockDnsFirewall(t)
 	blockingFirewall.On("GetFirewallMethod").Return(models.BlockList).Maybe()
-	blockingFirewall.On("AddIPToFirewall", mock.Anything, mock.Anything).Return(nil).Maybe()
+	blockingFirewall.On("AllowIPThroughFirewall", mock.Anything, mock.Anything).Return(nil).Maybe()
 	blockingFirewall.On("TrackIPToDomain", mock.Anything, mock.Anything).Maybe()
 	blockingFirewall.On("GetPidAndCommandFromDNSTransactionId", mock.Anything).Return(uint32(0), "", nil).Maybe()
 	return blockingFirewall
@@ -48,9 +49,6 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 	resp, err := conn.ReadMsg()
 	require.NoError(t, err)
 	assert.Equal(t, dns.RcodeSuccess, resp.Rcode)
-
-	blockedDomains := proxy.BlockedDomains()
-	assert.Empty(t, blockedDomains)
 }
 
 func TestDNSProxy_BlocksDomains(t *testing.T) {
@@ -73,16 +71,6 @@ func TestDNSProxy_BlocksDomains(t *testing.T) {
 
 	// Check the response was successful
 	assert.Equal(t, dns.RcodeRefused, resp.Rcode)
-
-	// Check blocked domains is empty
-	blockedDomains := proxy.BlockedDomains()
-	assert.Contains(t, blockedDomains, "example.com")
-
-	// Check the block log is correctly populated
-	blockLog := proxy.BlockingDNSHandler.BlockLog
-	require.Len(t, blockLog, 1)
-	assert.Equal(t, "example.com", blockLog[0].MatchedDomainSuffix)
-	assert.Equal(t, "api.example.com.", blockLog[0].DNSRequest)
 }
 
 func TestDNSProxy_Shutdown(t *testing.T) {
@@ -99,7 +87,7 @@ func TestDNSProxy_Shutdown(t *testing.T) {
 }
 
 func TestFindUnusedPort(t *testing.T) {
-	port, err := FindUnusedPort()
+	port, err := utils.FindUnusedPort()
 	require.NoError(t, err)
 	assert.NotEqual(t, 0, port)
 

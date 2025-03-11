@@ -19,7 +19,7 @@ type bpfEvent struct {
 	_                 [1]byte
 	Ip                uint32
 	OriginalIp        uint32
-	ByPassType        uint16
+	EventType         uint16
 	DnsTransactionId  uint16
 	PidResolved       bool
 	HasBeenRedirected bool
@@ -70,7 +70,6 @@ type bpfProgramSpecs struct {
 	CgSockOps       *ebpf.ProgramSpec `ebpf:"cg_sock_ops"`
 	CgroupSkbEgress *ebpf.ProgramSpec `ebpf:"cgroup_skb_egress"`
 	Connect4        *ebpf.ProgramSpec `ebpf:"connect4"`
-	Getpeername4    *ebpf.ProgramSpec `ebpf:"getpeername4"`
 }
 
 // bpfMapSpecs contains maps before they are loaded into the kernel.
@@ -78,7 +77,7 @@ type bpfProgramSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
 	Events                   *ebpf.MapSpec `ebpf:"events"`
-	FirewallIpMap            *ebpf.MapSpec `ebpf:"firewall_ip_map"`
+	FirewallAllowedIpsMap    *ebpf.MapSpec `ebpf:"firewall_allowed_ips_map"`
 	SockClientToOriginalIp   *ebpf.MapSpec `ebpf:"sock_client_to_original_ip"`
 	SockClientToOriginalPort *ebpf.MapSpec `ebpf:"sock_client_to_original_port"`
 	SocketPidMap             *ebpf.MapSpec `ebpf:"socket_pid_map"`
@@ -105,7 +104,7 @@ func (o *bpfObjects) Close() error {
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
 	Events                   *ebpf.Map `ebpf:"events"`
-	FirewallIpMap            *ebpf.Map `ebpf:"firewall_ip_map"`
+	FirewallAllowedIpsMap    *ebpf.Map `ebpf:"firewall_allowed_ips_map"`
 	SockClientToOriginalIp   *ebpf.Map `ebpf:"sock_client_to_original_ip"`
 	SockClientToOriginalPort *ebpf.Map `ebpf:"sock_client_to_original_port"`
 	SocketPidMap             *ebpf.Map `ebpf:"socket_pid_map"`
@@ -115,7 +114,7 @@ type bpfMaps struct {
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.Events,
-		m.FirewallIpMap,
+		m.FirewallAllowedIpsMap,
 		m.SockClientToOriginalIp,
 		m.SockClientToOriginalPort,
 		m.SocketPidMap,
@@ -130,7 +129,6 @@ type bpfPrograms struct {
 	CgSockOps       *ebpf.Program `ebpf:"cg_sock_ops"`
 	CgroupSkbEgress *ebpf.Program `ebpf:"cgroup_skb_egress"`
 	Connect4        *ebpf.Program `ebpf:"connect4"`
-	Getpeername4    *ebpf.Program `ebpf:"getpeername4"`
 }
 
 func (p *bpfPrograms) Close() error {
@@ -138,7 +136,6 @@ func (p *bpfPrograms) Close() error {
 		p.CgSockOps,
 		p.CgroupSkbEgress,
 		p.Connect4,
-		p.Getpeername4,
 	)
 }
 

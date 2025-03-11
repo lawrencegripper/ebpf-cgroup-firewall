@@ -76,7 +76,7 @@ var _ DnsFirewall = &EgressFirewall{}
 
 // DnsFirewall is an interface for the DNS proxy
 type DnsFirewall interface {
-	AddIPToFirewall(ip string, reason *Reason) error
+	AllowIPThroughFirewall(ip string, reason *Reason) error
 	GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error)
 	GetFirewallMethod() models.FirewallMethod
 	TrackIPToDomain(ip string, domain string)
@@ -120,13 +120,14 @@ func (e *EgressFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
 }
 
 func (e *EgressFirewall) GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error) {
-	pid, ok := e.dnsTransactionIdToPid.Load(dnsTransactionId)
+	// LoadAndDelete is used here so we don't have unbounded growth of the map
+	pid, ok := e.dnsTransactionIdToPid.LoadAndDelete(dnsTransactionId)
 	if !ok {
 		slog.Error("Failed to get PID from DNS transaction ID")
 		pid = 0
 		return pid, "unknown", fmt.Errorf("failed to get PID from DNS transaction ID")
 	}
-	cmd, ok := e.dnsTransactionIdToCmd.Load(dnsTransactionId)
+	cmd, ok := e.dnsTransactionIdToCmd.LoadAndDelete(dnsTransactionId)
 	if !ok {
 		slog.Error("Failed to get command from DNS transaction ID")
 		cmd = "unknown"
@@ -166,18 +167,11 @@ func (e *EgressFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int,
 	return originalIp, int(originalPort), nil
 }
 
-// TODO
-// Make it so you can optionally allow a port, if no port set then default to any
-// this gets interesting for the dns based ones, what ports? 443 and 80? we can't really guess
-// hmmm maybe it's ok as just ip allowed.
-
-// AddIPToFirewall adds the specified IP to the firewall's list
-// the FirewallMethod (logonly, allowlist, blocklist) defines how this list is handled
-// In the case where firewall is blocklist, ips added here are blocked, rest art allowed
-// In the case where firewall is allowlist, ips added here are allowed, rest are blocked
-func (e *EgressFirewall) AddIPToFirewall(ip string, reason *Reason) error {
+// AllowIPThroughFirewall adds an IP to the FirewallAllowedIpsMap in ebpf
+// which causes the cgroup_egress program to allow requests outbound to that ip
+func (e *EgressFirewall) AllowIPThroughFirewall(ip string, reason *Reason) error {
 	slog.Debug("Adding IP to firewall_ips_map", "ip", ip, slog.String("reason", reason.Comment), slog.String("kind", reason.KindHumanReadable()))
-	firewallIps := e.Objects.bpfMaps.FirewallIpMap
+	firewallIps := e.Objects.bpfMaps.FirewallAllowedIpsMap
 
 	err := firewallIps.Put(models.IPToIntNetworkOrder(ip), models.IPToIntNetworkOrder(ip))
 	if err != nil {
@@ -220,6 +214,8 @@ func intToIPHostByteOrder(val uint32) net.IP {
 //   - exemptPID: The PID of the DNS proxy process that should be exempt from redirection to allow calling upstream dns server.
 func AttachRedirectorToCGroup(
 	cGroupPath string,
+	httpProxyPort int,
+	httpsProxyPort int,
 	dnsProxyPort int,
 	exemptPID int,
 	firewallMethod models.FirewallMethod,
@@ -236,6 +232,17 @@ func AttachRedirectorToCGroup(
 	spec, err := loadBpf()
 	if err != nil {
 		return nil, fmt.Errorf("loading networkblock spec: %w", err)
+	}
+
+	// Pass through port configuration for the proxies
+	err = spec.Variables["const_http_proxy_port"].Set(uint32(httpProxyPort))
+	if err != nil {
+		return nil, fmt.Errorf("setting const_http_proxy_port variable failed: %w", err)
+	}
+
+	err = spec.Variables["const_https_proxy_port"].Set(uint32(httpsProxyPort))
+	if err != nil {
+		return nil, fmt.Errorf("setting const_https_proxy_port variable failed: %w", err)
 	}
 
 	// TODO: Make this detection better. Use the docker sdk to find containers and compare to the cgroup path
@@ -424,7 +431,7 @@ func (e *EgressFirewall) monitorRingBufferEventfunc() {
 		)
 
 		var eventTypeString string
-		switch event.ByPassType {
+		switch event.EventType {
 		case DNS_PROXY_PACKET_BYPASS_TYPE:
 			eventTypeString = "dnsProxyPacket"
 		case DNS_REDIRECT_TYPE:
@@ -484,7 +491,8 @@ func (e *EgressFirewall) monitorRingBufferEventfunc() {
 			)
 		}
 
-		if event.ByPassType == 1 || event.ByPassType == 11 {
+		// Store the dns transaction id to correlate the pid and command which made the request
+		if event.EventType == DNS_REDIRECT_TYPE || event.EventType == DNS_PROXY_PACKET_BYPASS_TYPE {
 			if event.DnsTransactionId != 0 {
 				e.dnsTransactionIdToPid.Store(event.DnsTransactionId, event.Pid)
 				e.dnsTransactionIdToCmd.Store(event.DnsTransactionId, cmdRun)

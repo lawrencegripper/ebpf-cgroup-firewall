@@ -18,6 +18,7 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/proxy"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 	"github.com/moby/sys/mountinfo"
 )
 
@@ -134,7 +135,17 @@ func main() {
 	firewallIps, firewallDomains, firewallUrls := splitDomainUrlOrIPListByType(firewallMethod, firewallList)
 
 	// get a port for the DNS server
-	dnsPort, err := dns.FindUnusedPort()
+	dnsPort, err := utils.FindUnusedPort()
+	if err != nil {
+		panic("No free ports")
+	}
+
+	httpProxyPort, err := utils.FindUnusedPort()
+	if err != nil {
+		panic("No free ports")
+	}
+
+	httpsProxyPort, err := utils.FindUnusedPort()
 	if err != nil {
 		panic("No free ports")
 	}
@@ -149,7 +160,7 @@ func main() {
 		// then attach the eBPF program to it
 		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			cgroupPath, dnsPort, ignoreCurrentPid, firewallMethod, attachingToDockerContainer)
+			cgroupPath, httpProxyPort, httpsProxyPort, dnsPort, ignoreCurrentPid, firewallMethod, attachingToDockerContainer)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
@@ -166,14 +177,15 @@ func main() {
 		}
 		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			wrapper.Path, dnsPort, ignoreCurrentPid, firewallMethod, attachingToDockerContainer)
+			wrapper.Path, httpProxyPort, httpsProxyPort, dnsPort, ignoreCurrentPid, firewallMethod, attachingToDockerContainer)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
 		}
 	}
 
-	dns, err := dns.StartDNSMonitoringProxy(
+	// Start DNS proxy
+	dnsProxy, err := dns.StartDNSMonitoringProxy(
 		dnsPort,
 		firewallDomains,
 		ebpfFirewall,
@@ -190,7 +202,7 @@ func main() {
 		if firewallMethod == models.AllowList {
 			comment = "Allow IP as on explicit allow list"
 		}
-		if err := ebpfFirewall.AddIPToFirewall(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: comment}); err != nil {
+		if err := ebpfFirewall.AllowIPThroughFirewall(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: comment}); err != nil {
 			slog.Error("Failed to allow IP", ip, logger.SlogError(err))
 			os.Exit(108)
 		}
@@ -199,7 +211,11 @@ func main() {
 	slog.Debug("DNS monitoring proxy started successfully")
 
 	// Start http proxy
-	proxy.Start(ebpfFirewall, dns, firewallDomains, firewallUrls)
+	_, err = proxy.Start(httpProxyPort, httpsProxyPort, ebpfFirewall, dnsProxy, firewallDomains, firewallUrls)
+	if err != nil {
+		slog.Error("Failed to start HTTP proxy", logger.SlogError(err))
+		os.Exit(101)
+	}
 
 	// If we're not attaching then we need to run the command in the cgroup
 	if attach {
@@ -234,10 +250,6 @@ func main() {
 		os.Exit(107)
 	}
 	defer blockedFile.Close()
-
-	for _, logEntry := range dns.BlockingDNSHandler.BlockLog {
-		fmt.Fprintf(blockedFile, "%v\n", logEntry)
-	}
 }
 
 func splitDomainUrlOrIPListByType(firewallMethod models.FirewallMethod, allowList []string) ([]string, []string, []string) {

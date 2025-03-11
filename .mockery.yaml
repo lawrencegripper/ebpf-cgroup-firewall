@@ -1,5 +1,8 @@
 with-expecter: True
 # outpkg: mocks
+resolve-type-alias: false
+disable-version-string: true
+issue-845-fix: true
 filename: "mock_{{.InterfaceName}}.go"
 dir: "{{.InterfaceDir}}"
 mockname: "Mock{{.InterfaceName}}"

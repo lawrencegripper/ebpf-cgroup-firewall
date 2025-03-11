@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
@@ -36,7 +35,7 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall ebpf.Dns
 	downstreamServerAddr := config.Servers[0] + ":" + config.Port
 	slog.Debug("Using downstream DNS resolver", "address", downstreamServerAddr)
 	if firewall.GetFirewallMethod() == models.AllowList {
-		err := firewall.AddIPToFirewall(config.Servers[0], &ebpf.Reason{
+		err := firewall.AllowIPThroughFirewall(config.Servers[0], &ebpf.Reason{
 			Kind:    ebpf.FromDnsRequest,
 			Comment: "when configured as allow list ensure we can call downstream dns server",
 		})
@@ -93,14 +92,6 @@ waitStartLoop:
 	}, nil
 }
 
-// HasBlockedDomains checks if there are any domains to be blocked by the DNSProxy.
-func (d *DNSProxy) HasBlockedDomains() bool {
-	if d.BlockingDNSHandler == nil {
-		return false
-	}
-	return len(d.BlockingDNSHandler.BlockLog) > 0
-}
-
 // Shutdown gracefully shuts down the DNS server
 func (d *DNSProxy) Shutdown() error {
 	if err := d.Server.Shutdown(); err != nil {
@@ -111,48 +102,8 @@ func (d *DNSProxy) Shutdown() error {
 	return nil
 }
 
-// BlockedDomains returns a string containing the domains that have been blocked
-func (d *DNSProxy) BlockedDomains() string {
-	builder := strings.Builder{}
-
-	d.BlockingDNSHandler.blockLogMu.Lock()
-	defer d.BlockingDNSHandler.blockLogMu.Unlock()
-
-	for _, block := range d.BlockingDNSHandler.BlockLog {
-		msg := fmt.Sprintf("Domain: %s caused request to be blocked. Request: %s\n", block.MatchedDomainSuffix, block.DNSRequest)
-		_, err := builder.WriteString(msg)
-		if err != nil {
-			fmt.Printf("Failed to write blocked domain to string builder: %v\n", err)
-			// If we can't write to a string builder, we should panic as something is very wrong with go/host
-			panic(err)
-		}
-	}
-	return builder.String()
-}
-
-// FindUnusedPort Finds an unused port to listen on
-func FindUnusedPort() (int, error) {
-	listener, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return 0, fmt.Errorf("failed to find an unused port: %w", err)
-	}
-	defer listener.Close()
-	addr, ok := listener.LocalAddr().(*net.UDPAddr)
-	if !ok {
-		return 0, fmt.Errorf("failed to assert type to *net.UDPAddr")
-	}
-	return addr.Port, nil
-}
-
-type dnsBlockResult struct {
-	MatchedDomainSuffix string
-	DNSRequest          string
-}
-
 type blockingDNSHandler struct {
 	firewallDomains           []string
-	BlockLog                  []dnsBlockResult
-	blockLogMu                sync.Mutex
 	dnsFirewall               ebpf.DnsFirewall
 	downstreamClient          *dns.Client
 	DownstreamServerAddr      string
@@ -165,7 +116,10 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Compress = false
 	m.Authoritative = true
 
-	// Somehow need to get at the udp private field on the w dns writer
+	pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
+	if err != nil {
+		slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
+	}
 
 	for _, q := range r.Question {
 		domainMatchedFirewallDomains := false
@@ -200,12 +154,6 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				if err := w.WriteMsg(m); err != nil {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
-				addToBlockLog(b, q, matchedBecause)
-
-				pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
-				if err != nil {
-					slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
-				}
 
 				slog.Warn("DNS BLOCKED",
 					"reason", "NotInAllowList",
@@ -229,14 +177,9 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				if err := w.WriteMsg(m); err != nil {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
-				addToBlockLog(b, q, matchedBecause)
 
 				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
 
-				pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
-				if err != nil {
-					slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
-				}
 				slog.Warn("DNS BLOCKED",
 					"reason", "InBlockList",
 					"explaination", explaination,
@@ -281,7 +224,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				// the matching already decided on the firewall method (allow, block)
 				for _, answer := range resp.Answer {
 					if a, ok := answer.(*dns.A); ok {
-						err = b.dnsFirewall.AddIPToFirewall(
+						err = b.dnsFirewall.AllowIPThroughFirewall(
 							a.A.String(),
 							&ebpf.Reason{
 								Kind:    ebpf.FromDnsRequest,
@@ -297,17 +240,8 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	err := w.WriteMsg(m)
+	err = w.WriteMsg(m)
 	if err != nil {
 		slog.Error("Failed to write DNS response", logger.SlogError(err))
 	}
-}
-
-func addToBlockLog(b *blockingDNSHandler, q dns.Question, matchedBecause string) {
-	b.blockLogMu.Lock()
-	b.BlockLog = append(b.BlockLog, dnsBlockResult{
-		MatchedDomainSuffix: matchedBecause,
-		DNSRequest:          q.Name,
-	})
-	b.blockLogMu.Unlock()
 }
