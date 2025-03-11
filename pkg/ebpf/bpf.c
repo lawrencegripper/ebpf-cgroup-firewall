@@ -23,7 +23,7 @@ struct event {
   bool allowed;
   __u32 ip;
   __u32 originalIp;
-  __u16 eventType; 
+  __u16 eventType;
   __u16 dnsTransactionId;
   bool pidResolved;
   bool hasBeenRedirected;
@@ -107,7 +107,8 @@ struct {
   __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } sock_client_to_original_port SEC(".maps");
 
-// Used by proxy on receiving request. Maps the src port to the client socket cookie
+// Used by proxy on receiving request. Maps the src port to the client socket
+// cookie
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __uint(map_flags, BPF_F_NO_PREALLOC);
