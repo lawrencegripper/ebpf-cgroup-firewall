@@ -28,7 +28,12 @@ test: ## Run the tests
 
 .PHONY: lint
 lint:
+	clang-format --style=file --Werror --dry-run $(shell find . -type f -iname "*.c" -o -iname "*.h")
 	golangci-lint run
+
+.PHONY: lint-fix
+lint-fix:
+	clang-format --style=file -i $(shell find . -type f -iname "*.c" -o -iname "*.h")
 
 .PHONY: smoketest
 smoketest: build ## Run the smoke test
