@@ -127,7 +127,7 @@ struct {
   // loaded
   // TODO: Look at clearing out old ips from the list or handling it's size some
   // other way
-} firewall_ip_map SEC(".maps");
+} firewall_allowed_ips_map SEC(".maps");
 
 // Map for tracking socket cookie to pid mapping
 struct {
@@ -361,7 +361,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
   // Setup default action based on firewall mode
   bool destination_allowed = false;
   bool ip_present_in_firewall_list =
-      bpf_map_lookup_elem(&firewall_ip_map, &original_ip);
+      bpf_map_lookup_elem(&firewall_allowed_ips_map, &original_ip);
 
   // Only destinations added to the firewall are allowed (or we're in log only
   // mode)

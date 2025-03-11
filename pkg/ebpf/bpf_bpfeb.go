@@ -77,7 +77,7 @@ type bpfProgramSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
 	Events                   *ebpf.MapSpec `ebpf:"events"`
-	FirewallIpMap            *ebpf.MapSpec `ebpf:"firewall_ip_map"`
+	FirewallAllowedIpsMap    *ebpf.MapSpec `ebpf:"firewall_allowed_ips_map"`
 	SockClientToOriginalIp   *ebpf.MapSpec `ebpf:"sock_client_to_original_ip"`
 	SockClientToOriginalPort *ebpf.MapSpec `ebpf:"sock_client_to_original_port"`
 	SocketPidMap             *ebpf.MapSpec `ebpf:"socket_pid_map"`
@@ -104,7 +104,7 @@ func (o *bpfObjects) Close() error {
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
 	Events                   *ebpf.Map `ebpf:"events"`
-	FirewallIpMap            *ebpf.Map `ebpf:"firewall_ip_map"`
+	FirewallAllowedIpsMap    *ebpf.Map `ebpf:"firewall_allowed_ips_map"`
 	SockClientToOriginalIp   *ebpf.Map `ebpf:"sock_client_to_original_ip"`
 	SockClientToOriginalPort *ebpf.Map `ebpf:"sock_client_to_original_port"`
 	SocketPidMap             *ebpf.Map `ebpf:"socket_pid_map"`
@@ -114,7 +114,7 @@ type bpfMaps struct {
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.Events,
-		m.FirewallIpMap,
+		m.FirewallAllowedIpsMap,
 		m.SockClientToOriginalIp,
 		m.SockClientToOriginalPort,
 		m.SocketPidMap,

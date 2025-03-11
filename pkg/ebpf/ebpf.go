@@ -76,7 +76,7 @@ var _ DnsFirewall = &EgressFirewall{}
 
 // DnsFirewall is an interface for the DNS proxy
 type DnsFirewall interface {
-	AddIPToFirewall(ip string, reason *Reason) error
+	AllowIPThroughFirewall(ip string, reason *Reason) error
 	GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error)
 	GetFirewallMethod() models.FirewallMethod
 	TrackIPToDomain(ip string, domain string)
@@ -167,18 +167,11 @@ func (e *EgressFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int,
 	return originalIp, int(originalPort), nil
 }
 
-// TODO
-// Make it so you can optionally allow a port, if no port set then default to any
-// this gets interesting for the dns based ones, what ports? 443 and 80? we can't really guess
-// hmmm maybe it's ok as just ip allowed.
-
-// AddIPToFirewall adds the specified IP to the firewall's list
-// the FirewallMethod (logonly, allowlist, blocklist) defines how this list is handled
-// In the case where firewall is blocklist, ips added here are blocked, rest art allowed
-// In the case where firewall is allowlist, ips added here are allowed, rest are blocked
-func (e *EgressFirewall) AddIPToFirewall(ip string, reason *Reason) error {
+// AllowIPThroughFirewall adds an IP to the FirewallAllowedIpsMap in ebpf
+// which causes the cgroup_egress program to allow requests outbound to that ip
+func (e *EgressFirewall) AllowIPThroughFirewall(ip string, reason *Reason) error {
 	slog.Debug("Adding IP to firewall_ips_map", "ip", ip, slog.String("reason", reason.Comment), slog.String("kind", reason.KindHumanReadable()))
-	firewallIps := e.Objects.bpfMaps.FirewallIpMap
+	firewallIps := e.Objects.bpfMaps.FirewallAllowedIpsMap
 
 	err := firewallIps.Put(models.IPToIntNetworkOrder(ip), models.IPToIntNetworkOrder(ip))
 	if err != nil {

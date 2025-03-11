@@ -24,6 +24,7 @@ build: generate ## Build the tool
 
 .PHONY: test
 test: ## Run the tests
+	mockery --log-level=error
 	go test -race -v ./...
 
 .PHONY: lint

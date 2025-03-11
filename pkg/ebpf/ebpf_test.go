@@ -127,7 +127,7 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 			defer httpServer.Close()
 
 			if tt.allowedFirewallIPs != "" {
-				err = firewall.AddIPToFirewall(tt.allowedFirewallIPs, &Reason{})
+				err = firewall.AllowIPThroughFirewall(tt.allowedFirewallIPs, &Reason{})
 				require.NoError(t, err)
 			}
 
@@ -234,7 +234,7 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, 0, 0, redirectDNSToPort, os.Getpid(), models.AllowList, false)
 	require.NoError(t, err)
 
-	err = firewall.AddIPToFirewall("127.0.0.1", &Reason{})
+	err = firewall.AllowIPThroughFirewall("127.0.0.1", &Reason{})
 	require.NoError(t, err)
 
 	cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPathForCurrentProcess)
