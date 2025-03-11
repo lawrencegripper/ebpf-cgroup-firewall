@@ -120,13 +120,14 @@ func (e *EgressFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
 }
 
 func (e *EgressFirewall) GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error) {
-	pid, ok := e.dnsTransactionIdToPid.Load(dnsTransactionId)
+	// LoadAndDelete is used here so we don't have unbounded growth of the map
+	pid, ok := e.dnsTransactionIdToPid.LoadAndDelete(dnsTransactionId)
 	if !ok {
 		slog.Error("Failed to get PID from DNS transaction ID")
 		pid = 0
 		return pid, "unknown", fmt.Errorf("failed to get PID from DNS transaction ID")
 	}
-	cmd, ok := e.dnsTransactionIdToCmd.Load(dnsTransactionId)
+	cmd, ok := e.dnsTransactionIdToCmd.LoadAndDelete(dnsTransactionId)
 	if !ok {
 		slog.Error("Failed to get command from DNS transaction ID")
 		cmd = "unknown"
@@ -437,7 +438,7 @@ func (e *EgressFirewall) monitorRingBufferEventfunc() {
 		)
 
 		var eventTypeString string
-		switch event.ByPassType {
+		switch event.EventType {
 		case DNS_PROXY_PACKET_BYPASS_TYPE:
 			eventTypeString = "dnsProxyPacket"
 		case DNS_REDIRECT_TYPE:
@@ -497,7 +498,8 @@ func (e *EgressFirewall) monitorRingBufferEventfunc() {
 			)
 		}
 
-		if event.ByPassType == 1 || event.ByPassType == 11 {
+		// Store the dns transaction id to correlate the pid and command which made the request
+		if event.EventType == DNS_REDIRECT_TYPE || event.EventType == DNS_PROXY_PACKET_BYPASS_TYPE {
 			if event.DnsTransactionId != 0 {
 				e.dnsTransactionIdToPid.Store(event.DnsTransactionId, event.Pid)
 				e.dnsTransactionIdToCmd.Store(event.DnsTransactionId, cmdRun)

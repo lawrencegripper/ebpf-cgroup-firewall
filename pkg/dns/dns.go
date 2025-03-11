@@ -116,7 +116,10 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Compress = false
 	m.Authoritative = true
 
-	// Somehow need to get at the udp private field on the w dns writer
+	pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
+	if err != nil {
+		slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
+	}
 
 	for _, q := range r.Question {
 		domainMatchedFirewallDomains := false
@@ -152,11 +155,6 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
 
-				pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
-				if err != nil {
-					slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
-				}
-
 				slog.Warn("DNS BLOCKED",
 					"reason", "NotInAllowList",
 					"explaination", "Domain doesn't match any allowlist prefixes",
@@ -182,10 +180,6 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
 
-				pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
-				if err != nil {
-					slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
-				}
 				slog.Warn("DNS BLOCKED",
 					"reason", "InBlockList",
 					"explaination", explaination,
@@ -246,7 +240,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	err := w.WriteMsg(m)
+	err = w.WriteMsg(m)
 	if err != nil {
 		slog.Error("Failed to write DNS response", logger.SlogError(err))
 	}
