@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
@@ -93,14 +92,6 @@ waitStartLoop:
 	}, nil
 }
 
-// HasBlockedDomains checks if there are any domains to be blocked by the DNSProxy.
-func (d *DNSProxy) HasBlockedDomains() bool {
-	if d.BlockingDNSHandler == nil {
-		return false
-	}
-	return len(d.BlockingDNSHandler.BlockLog) > 0
-}
-
 // Shutdown gracefully shuts down the DNS server
 func (d *DNSProxy) Shutdown() error {
 	if err := d.Server.Shutdown(); err != nil {
@@ -111,34 +102,8 @@ func (d *DNSProxy) Shutdown() error {
 	return nil
 }
 
-// BlockedDomains returns a string containing the domains that have been blocked
-func (d *DNSProxy) BlockedDomains() string {
-	builder := strings.Builder{}
-
-	d.BlockingDNSHandler.blockLogMu.Lock()
-	defer d.BlockingDNSHandler.blockLogMu.Unlock()
-
-	for _, block := range d.BlockingDNSHandler.BlockLog {
-		msg := fmt.Sprintf("Domain: %s caused request to be blocked. Request: %s\n", block.MatchedDomainSuffix, block.DNSRequest)
-		_, err := builder.WriteString(msg)
-		if err != nil {
-			fmt.Printf("Failed to write blocked domain to string builder: %v\n", err)
-			// If we can't write to a string builder, we should panic as something is very wrong with go/host
-			panic(err)
-		}
-	}
-	return builder.String()
-}
-
-type dnsBlockResult struct {
-	MatchedDomainSuffix string
-	DNSRequest          string
-}
-
 type blockingDNSHandler struct {
 	firewallDomains           []string
-	BlockLog                  []dnsBlockResult
-	blockLogMu                sync.Mutex
 	dnsFirewall               ebpf.DnsFirewall
 	downstreamClient          *dns.Client
 	DownstreamServerAddr      string
@@ -186,7 +151,6 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				if err := w.WriteMsg(m); err != nil {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
-				addToBlockLog(b, q, matchedBecause)
 
 				pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
 				if err != nil {
@@ -215,7 +179,6 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				if err := w.WriteMsg(m); err != nil {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
-				addToBlockLog(b, q, matchedBecause)
 
 				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
 
@@ -287,13 +250,4 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if err != nil {
 		slog.Error("Failed to write DNS response", logger.SlogError(err))
 	}
-}
-
-func addToBlockLog(b *blockingDNSHandler, q dns.Question, matchedBecause string) {
-	b.blockLogMu.Lock()
-	b.BlockLog = append(b.BlockLog, dnsBlockResult{
-		MatchedDomainSuffix: matchedBecause,
-		DNSRequest:          q.Name,
-	})
-	b.blockLogMu.Unlock()
 }

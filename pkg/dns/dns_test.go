@@ -49,9 +49,6 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 	resp, err := conn.ReadMsg()
 	require.NoError(t, err)
 	assert.Equal(t, dns.RcodeSuccess, resp.Rcode)
-
-	blockedDomains := proxy.BlockedDomains()
-	assert.Empty(t, blockedDomains)
 }
 
 func TestDNSProxy_BlocksDomains(t *testing.T) {
@@ -74,16 +71,6 @@ func TestDNSProxy_BlocksDomains(t *testing.T) {
 
 	// Check the response was successful
 	assert.Equal(t, dns.RcodeRefused, resp.Rcode)
-
-	// Check blocked domains is empty
-	blockedDomains := proxy.BlockedDomains()
-	assert.Contains(t, blockedDomains, "example.com")
-
-	// Check the block log is correctly populated
-	blockLog := proxy.BlockingDNSHandler.BlockLog
-	require.Len(t, blockLog, 1)
-	assert.Equal(t, "example.com", blockLog[0].MatchedDomainSuffix)
-	assert.Equal(t, "api.example.com.", blockLog[0].DNSRequest)
 }
 
 func TestDNSProxy_Shutdown(t *testing.T) {
