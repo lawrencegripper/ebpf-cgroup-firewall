@@ -141,13 +141,20 @@ volatile const __u16 const_https_proxy_port = 6776;
 */
 volatile const __u16 const_firewall_mode;
 
+/* 
+This is the address where the DNS and HTTP proxy server is listening.
+In the case of docker cgroup this might be 172.17.0.1 or in the normal 
+case of non-isolated network cgrou it'll be 127.0.0.1
+*/
+const __u32 ADDRESS_LOCALHOST_NETBYTEORDER = bpf_htonl(0x7f000001);
+volatile const __u32 const_mitm_proxy_address = ADDRESS_LOCALHOST_NETBYTEORDER;
+
 const __u16 FIREWALL_MODE_LOG_ONLY = 0;
 const __u16 FIREWALL_MODE_ALLOW_LIST = 1;
 const __u16 FIREWALL_MODE_BLOCK_LIST = 2;
 // This is to help with reability only
 const bool EGRESS_ALLOW_PACKET = 1;
 const bool EGRESS_DENY_PACKET = 1;
-const __u32 ADDRESS_LOCALHOST_NETBYTEORDER = bpf_htonl(0x7f000001);
 
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx)
@@ -186,7 +193,7 @@ int connect4(struct bpf_sock_addr *ctx)
         // orig->port = ctx->user_port;
 
         /* This is the hexadecimal representation of 127.0.0.1 address */
-        ctx->user_ip4 = ADDRESS_LOCALHOST_NETBYTEORDER;
+        ctx->user_ip4 = const_mitm_proxy_address;
         
         // TODO: Determine if the connection is https and send by taking a look at it
         // rather than relying on ports
@@ -214,7 +221,7 @@ int connect4(struct bpf_sock_addr *ctx)
         didRedirect = true;
 
         /* This is the hexadecimal representation of 127.0.0.1 address */
-        ctx->user_ip4 = ADDRESS_LOCALHOST_NETBYTEORDER;
+        ctx->user_ip4 = const_mitm_proxy_address;
         ctx->user_port = bpf_htons(const_dns_proxy_port);
 
         struct event info = {
@@ -335,7 +342,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     bool isRedirectedByToOurProxy = false;
 
     // Allow traffic if original address was to localhost
-    if (original_ip == ADDRESS_LOCALHOST_NETBYTEORDER) {
+    if (original_ip == const_mitm_proxy_address) {
         struct event info = {
             .port = -1,
             .allowed = true,
@@ -370,7 +377,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
 
         // return EGRESS_ALLOW_PACKET;
 
-        bool isProxiedDnsRequest = udp.uh_dport == bpf_htons(const_dns_proxy_port) && iph.daddr == ADDRESS_LOCALHOST_NETBYTEORDER;
+        bool isProxiedDnsRequest = udp.uh_dport == bpf_htons(const_dns_proxy_port) && iph.daddr == const_mitm_proxy_address;
         if (isProxiedDnsRequest)
         {
             __u16 skbReadOffset = sizeof(struct iphdr) + sizeof(struct udphdr);
@@ -419,7 +426,7 @@ int cgroup_skb_egress(struct __sk_buff *skb)
     // is allowed. This gives us defense in depth. DNS must add allowed IP, Packet validates it's allowed
     // then it gets through to the http proxy which can validate the url
     if (destination_allowed) {
-        if (iph.daddr == ADDRESS_LOCALHOST_NETBYTEORDER && (port == bpf_htons(const_http_proxy_port) || port == bpf_htons(const_https_proxy_port))) {
+        if (iph.daddr == const_mitm_proxy_address && (port == bpf_htons(const_http_proxy_port) || port == bpf_htons(const_https_proxy_port))) {
             struct event info = {
                 .port = bpf_ntohs(port),
                 .allowed = true,

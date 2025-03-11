@@ -9,16 +9,26 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+
 	"github.com/stretchr/testify/require"
 )
 
+func mockedBlockingFirewall(t *testing.T) *ebpf.MockDnsFirewall {
+	blockingFirewall := ebpf.NewMockDnsFirewall(t)
+	blockingFirewall.On("GetFirewallMethod").Return(models.BlockList).Maybe()
+	blockingFirewall.On("AddIPToFirewall", mock.Anything, mock.Anything).Return(nil).Maybe()
+	blockingFirewall.On("TrackIPToDomain", mock.Anything, mock.Anything).Maybe()
+	blockingFirewall.On("GetPidAndCommandFromDNSTransactionId", mock.Anything).Return(uint32(0), "", nil).Maybe()
+	return blockingFirewall
+}
+
 func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
-	blockingFirewall := ebpf.DnsFirewall{
-		FirewallMethod: models.BlockList,
-	}
+	blockingFirewall := mockedBlockingFirewall(t)
+
 	domainsToBlock := []string{"bing.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, &blockingFirewall, false)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, blockingFirewall, false)
 	require.NoError(t, err)
 
 	defer proxy.Shutdown() //nolint:errcheck // Shutdown the proxy after test
@@ -44,12 +54,10 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 }
 
 func TestDNSProxy_BlocksDomains(t *testing.T) {
-	blockingFirewall := ebpf.DnsFirewall{
-		FirewallMethod: models.BlockList,
-	}
+	blockingFirewall := mockedBlockingFirewall(t)
 	domainsToBlock := []string{"example.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, &blockingFirewall, false)
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, blockingFirewall, false)
 	require.NoError(t, err)
 	assert.NotNil(t, proxy)
 
@@ -80,7 +88,9 @@ func TestDNSProxy_BlocksDomains(t *testing.T) {
 func TestDNSProxy_Shutdown(t *testing.T) {
 	domainsToBlock := []string{"example.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil, false)
+	blockingFirewall := mockedBlockingFirewall(t)
+
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, blockingFirewall, false)
 	require.NoError(t, err)
 	assert.NotNil(t, proxy)
 
@@ -103,7 +113,9 @@ func TestFindUnusedPort(t *testing.T) {
 func TestDNSProxy_RefusesIPv6Requests(t *testing.T) {
 	domainsToBlock := []string{"example.com"}
 
-	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, nil, false)
+	blockingFirewall := mockedBlockingFirewall(t)
+
+	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, blockingFirewall, false)
 	require.NoError(t, err)
 	assert.NotNil(t, proxy)
 

@@ -76,7 +76,7 @@ attach_firewall_test() {
     echo "attach $args; then execute \"$cmd\" in current cgroup" | $indent_twice
 
     log_file="/tmp/firewall-${RANDOM}.json"
-    ./bin/ebpf-cgroup-firewall attach --log-file $log_file $args &
+    ./bin/ebpf-cgroup-firewall attach --log-file "$log_file" $args &
     pid=$!
 
     if ! ps -p $pid > /dev/null; then
@@ -100,4 +100,42 @@ attach_firewall_test() {
 
     # echo -e "\033[0;96m⬇️ Command Output:\033[0m" | $indent_once
     # echo "$cmdOutput" | $indent_twice
+}
+
+attach_container_firewall_test() {
+    local args="$1"
+    local cmd="$2"
+
+    # Start a container to attach to
+    container_name="attach-con-$RANDOM"
+    container_id=$(docker run --name=$container_name -d -it ghcr.io/curl/curl-container/curl-dev-debian:master sleep 10000)
+
+    echo -e "\033[0;96m⬇️ Command:\033[0m" | $indent_once
+    echo "attach --docker-container $container_id $args; then execute \"$cmd\" in current cgroup" | $indent_twice
+
+    log_file="/tmp/firewall-${RANDOM}.json"
+    ./bin/ebpf-cgroup-firewall attach --debug --log-file "$log_file" --docker-container "$container_name" $args &
+    pid=$!
+
+    if ! ps -p $pid > /dev/null; then
+        echo "Firewall process failed to start" >&2
+        cat $log_file
+        exit 1
+    fi
+
+    # give the proxy some time to start 
+    # TODO: this is a bit of a hack, we should have a way to wait for the proxy to be ready
+    sleep 4
+
+    set +e
+    echo "Docker exec output:"
+    docker exec -i $container_name "/bin/bash" "-c" "$cmd"
+    exitCode=$?
+    set -e
+
+    cmdOutput=$(cat "$log_file")
+
+    kill $pid || echo "Process failed"
+    docker rm -f $container_name || echo "Failed to remove container"
+    rm $log_file || echo "Failed to tidy up log file" # tidy up
 }

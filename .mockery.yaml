@@ -1,0 +1,13 @@
+with-expecter: True
+# outpkg: mocks
+filename: "mock_{{.InterfaceName}}.go"
+dir: "{{.InterfaceDir}}"
+mockname: "Mock{{.InterfaceName}}"
+outpkg: "{{.PackageName}}"
+inpackage: True
+packages:
+    github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf:
+        config:
+        interfaces:
+            DnsFirewall:
+              config:

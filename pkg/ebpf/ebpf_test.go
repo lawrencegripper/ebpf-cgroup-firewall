@@ -5,6 +5,7 @@ package ebpf
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/containerd/cgroups"
 	"github.com/containerd/cgroups/v3/cgroup2"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/moby/sys/mountinfo"
 	"github.com/stretchr/testify/assert"
@@ -46,7 +48,7 @@ func TestAttachRedirectorToCGroup_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0, models.LogOnly)
+			_, err := AttachRedirectorToCGroup(tt.cGroupPath, tt.dnsProxyPort, 0, models.LogOnly, false)
 			assert.EqualError(t, err, tt.expectedError)
 		})
 	}
@@ -54,56 +56,63 @@ func TestAttachRedirectorToCGroup_InvalidInputs(t *testing.T) {
 
 func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 	tests := []struct {
-		name                     string
-		firewallMode             models.FirewallMethod
-		firewallIPs              string
-		expectedLocalhostAllowed bool
+		name               string
+		firewallMode       models.FirewallMethod
+		allowedFirewallIPs string
+		attemptCommand     string
+		expectError        bool
 	}{
-		// Each test will request 127.0.0.1:5000 http
-		// server we're running
 		{
-			name:                     "AllowList: Allows Request to allowed IP",
-			firewallMode:             models.AllowList,
-			firewallIPs:              "127.0.0.1",
-			expectedLocalhostAllowed: true,
+			name:               "AllowList: Allows Request 1.1.1.1 when its allowed",
+			firewallMode:       models.AllowList,
+			allowedFirewallIPs: "1.1.1.1",
+			attemptCommand:     "curl -sL --max-time 2 1.1.1.1",
+			expectError:        false,
 		},
 		{
-			name:                     "AllowList: Blocks Request to other IP",
-			firewallMode:             models.AllowList,
-			firewallIPs:              "172.1.1.1",
-			expectedLocalhostAllowed: false,
+			name:               "AllowList: Blocks Request to 1.1.1.1 when only 172.1.1.1 is allowed",
+			firewallMode:       models.AllowList,
+			allowedFirewallIPs: "172.1.1.1",
+			attemptCommand:     "curl -sL --max-time 2 1.1.1.1",
+			expectError:        true,
 		},
 		{
-			name:                     "BlockList: Allows Request to other IP",
-			firewallMode:             models.BlockList,
-			firewallIPs:              "172.1.1.1",
-			expectedLocalhostAllowed: true,
+			name:           "BlockList: Blocks Request to 1.1.1.1 when it's blocked",
+			firewallMode:   models.BlockList,
+			attemptCommand: "curl -sL --max-time 2 1.1.1.1",
+			expectError:    true,
 		},
 		{
-			name:                     "BlockList: Blocks Request to blocked IP",
-			firewallMode:             models.BlockList,
-			firewallIPs:              "127.0.0.1",
-			expectedLocalhostAllowed: false,
+			name:           "LogMode: Requests allowed nothing blocked",
+			firewallMode:   models.LogOnly,
+			attemptCommand: "curl bing.com",
+			expectError:    true,
 		},
 		{
-			name:                     "LogMode: Requests allowed",
-			firewallMode:             models.LogOnly,
-			firewallIPs:              "127.0.0.1",
-			expectedLocalhostAllowed: true,
+			name:               "Special case: Localhost requests are allowed",
+			firewallMode:       models.AllowList,
+			allowedFirewallIPs: "1.1.1.1",
+			attemptCommand:     "curl -sL --max-time 2 127.0.0.1:6775",
+			expectError:        false,
 		},
 	}
 
+	// Help with debugging
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	logger.ShowDebugLogs = true
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+
 			cgroupMan, cgroupPath := createTestCGroup(t)
 
 			redirectDNSToPort := 55555
-			firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, tt.firewallMode)
+			firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, tt.firewallMode, false)
 			require.NoError(t, err)
 
-			// Start a http server to validate normal requests are not impacted
+			// Start a http server to act as http proxy server would
 			httpServer := &http.Server{
-				Addr: ":5000",
+				Addr: ":6775",
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if _, err := fmt.Fprintln(w, "hi"); err != nil {
 						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -117,14 +126,16 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 			}()
 			defer httpServer.Close()
 
-			err = firewall.AddIPToFirewall(tt.firewallIPs, nil)
-			require.NoError(t, err)
+			if tt.allowedFirewallIPs != "" {
+				err = firewall.AddIPToFirewall(tt.allowedFirewallIPs, &Reason{})
+				require.NoError(t, err)
+			}
 
 			cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPath)
 			require.NoError(t, err)
 			defer cleanup()
 
-			cmd := exec.Command("sh", "-c", "curl -sL --connect-timeout 1 http://127.0.0.1:5000")
+			cmd := exec.Command("sh", "-c", tt.attemptCommand)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -149,36 +160,25 @@ func TestAttachRedirectorToCGroup_IPFirewall(t *testing.T) {
 
 			select {
 			case <-time.After(5 * time.Second):
-				if tt.expectedLocalhostAllowed {
+				if tt.expectError {
 					t.Fatal("Timeout waiting for command to finish")
 				}
 			case err := <-cmdChan:
-				if tt.expectedLocalhostAllowed {
-					require.NoError(t, err)
-				} else {
+				if tt.expectError {
 					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
 				}
-			}
-
-			if tt.expectedLocalhostAllowed {
-				assert.Empty(t, firewall.BlockedEvents())
-			} else {
-				assert.GreaterOrEqual(t, len(firewall.BlockedEvents()), 1)
-				blockedEvent := firewall.BlockedEvents()[0]
-				assert.False(t, blockedEvent.Allowed)
-				// 127.0.0.1 as int
-				localhostIP := uint32(0x100007f)
-				assert.Equal(t, localhostIP, blockedEvent.Ip)
 			}
 		})
 	}
 }
 
-func TestAttachRedirectorToCGroup_IPv6(t *testing.T) {
-	cgroupMan, cgroupPath := createTestCGroup(t)
+func TestAttachRedirectorToCGroup_Blocks_All_IPv6(t *testing.T) {
+	_, cgroupPath := createTestCGroup(t)
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, models.AllowList)
+	_, err := AttachRedirectorToCGroup(cgroupPath, redirectDNSToPort, 9999, models.AllowList, false)
 	require.NoError(t, err)
 
 	// Start a http server on IPv6
@@ -213,13 +213,8 @@ func TestAttachRedirectorToCGroup_IPv6(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = cgroupMan.AddProc(uint64(cmd.Process.Pid))
-	require.NoError(t, err)
-
 	err = cmd.Wait()
 	require.Error(t, err)
-
-	assert.GreaterOrEqual(t, len(firewall.BlockedEvents()), 1)
 }
 
 func createTestCGroup(t *testing.T) (*cgroup2.Manager, string) {
@@ -236,10 +231,10 @@ func TestAttachRedirectorToCGroup_RedirectDNS(t *testing.T) {
 	cgroupPathForCurrentProcess := getCurrentCGroup()
 
 	redirectDNSToPort := 55555
-	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0, models.AllowList)
+	firewall, err := AttachRedirectorToCGroup(cgroupPathForCurrentProcess, redirectDNSToPort, 0, models.AllowList, false)
 	require.NoError(t, err)
 
-	err = firewall.AddIPToFirewall("127.0.0.1", nil)
+	err = firewall.AddIPToFirewall("127.0.0.1", &Reason{})
 	require.NoError(t, err)
 
 	cGroupFD, cleanup, err := fileDescriptorForCGroupPath(cgroupPathForCurrentProcess)

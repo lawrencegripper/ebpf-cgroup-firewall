@@ -34,9 +34,15 @@ type RunArgs struct {
 	Command string `arg:"" help:"The command to run" name:"command"`
 }
 
+type AttachArgs struct {
+	FirewallArgs
+	CGroupPath              string `xor:"CGroupPath,DockerContainerNameOrId" help:"The path to the cgroup which should be firewalled, if blank current cgroup used" name:"cgroup-path"`
+	DockerContainerNameOrId string `xor:"CGroupPath,DockerContainerNameOrId" help:"The docker container name or ID to attach" name:"docker-container"`
+}
+
 var CmdOptions struct {
-	Run    RunArgs      `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
-	Attach FirewallArgs `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
+	Run    RunArgs    `cmd:"" help:"Run a command in a new CGroup only allowing connections to the allow list."`
+	Attach AttachArgs `cmd:"" help:"Attach the firewall to the current CGroup, it will impact all processes in the current group."`
 }
 
 func main() {
@@ -45,6 +51,8 @@ func main() {
 	var blockList []string
 	var firewallMethod models.FirewallMethod
 	var logfile string
+	var cgroupPath string
+	var attachingToDockerContainer bool
 
 	ctx := kong.Parse(&CmdOptions)
 	switch ctx.Command() {
@@ -63,6 +71,26 @@ func main() {
 		logger.ShowDebugLogs = CmdOptions.Attach.Debug
 		if CmdOptions.Attach.LogFile != nil {
 			logfile = *CmdOptions.Attach.LogFile
+		}
+
+		if CmdOptions.Attach.DockerContainerNameOrId != "" {
+			// TODO: Replace with docker SDK call
+			// TODO: command injection
+			slog.Debug("Attaching to docker container from cli", "container-name", CmdOptions.Attach.DockerContainerNameOrId)
+			attachingToDockerContainer = true
+			cmd := exec.Command("docker", "inspect", "--format", "{{.Id}}", CmdOptions.Attach.DockerContainerNameOrId)
+			output, err := cmd.Output()
+			if err != nil {
+				slog.Error("Failed to get Docker container ID", logger.SlogError(err))
+				os.Exit(110)
+			}
+			containerID := strings.TrimSpace(string(output))
+			slog.Debug("Docker container ID is", "id", containerID)
+			cgroupPath = fmt.Sprintf("/sys/fs/cgroup/system.slice/docker-%s.scope", containerID)
+		} else if CmdOptions.Attach.CGroupPath != "" {
+			cgroupPath = CmdOptions.Attach.CGroupPath
+		} else {
+			cgroupPath = GetCGroupForCurrentProcess()
 		}
 	default:
 		panic("Command not implemented")
@@ -103,7 +131,7 @@ func main() {
 		firewallList = blockList
 	}
 
-	firewallIps, firewallDomains, firewallUrls := splitDomainUrlOrIPListByType(firewallList)
+	firewallIps, firewallDomains, firewallUrls := splitDomainUrlOrIPListByType(firewallMethod, firewallList)
 
 	// get a port for the DNS server
 	dnsPort, err := dns.FindUnusedPort()
@@ -113,32 +141,32 @@ func main() {
 
 	// Actions should already be running the worker in a cgroup so we can just attach to that
 	// first find it:
-	pathToCGroupToRunIn := GetCGroupForCurrentProcess()
-	slog.Debug("Running in cgroup", "cgroup", pathToCGroupToRunIn)
+	slog.Debug("Running in cgroup", "cgroup", cgroupPath)
 	slog.Debug("Pid for our process is", "pid", os.Getpid())
-	var ebpfFirewall *ebpf.DnsFirewall
+	var ebpfFirewall *ebpf.EgressFirewall
 	var wrapper *cgroup.CGroupWrapper
 	if attach {
 		// then attach the eBPF program to it
 		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			pathToCGroupToRunIn, dnsPort, ignoreCurrentPid, firewallMethod)
+			cgroupPath, dnsPort, ignoreCurrentPid, firewallMethod, attachingToDockerContainer)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
 		}
 	} else {
+		currentCGroup := GetCGroupForCurrentProcess()
 		stringCmd := CmdOptions.Run.Command
 		splitCmd := strings.Split(stringCmd, " ")
 		cmd := exec.Command(splitCmd[0], splitCmd[1:]...)
-		wrapper, err = cgroup.NewCGroupWrapper(pathToCGroupToRunIn, cmd)
+		wrapper, err = cgroup.NewCGroupWrapper(currentCGroup, cmd)
 		if err != nil {
 			slog.Error("Failed to create cgroup", logger.SlogError(err))
 			os.Exit(302)
 		}
 		ignoreCurrentPid := os.Getpid()
 		ebpfFirewall, err = ebpf.AttachRedirectorToCGroup(
-			wrapper.Path, dnsPort, ignoreCurrentPid, firewallMethod)
+			wrapper.Path, dnsPort, ignoreCurrentPid, firewallMethod, attachingToDockerContainer)
 		if err != nil {
 			slog.Error("Failed to attach eBPF program to cgroup", logger.SlogError(err))
 			os.Exit(105)
@@ -212,7 +240,7 @@ func main() {
 	}
 }
 
-func splitDomainUrlOrIPListByType(allowList []string) ([]string, []string, []string) {
+func splitDomainUrlOrIPListByType(firewallMethod models.FirewallMethod, allowList []string) ([]string, []string, []string) {
 	var ips []string
 	var domains []string
 	var urls []string
@@ -248,8 +276,15 @@ func splitDomainUrlOrIPListByType(allowList []string) ([]string, []string, []str
 				panic(err)
 			}
 			urls = append(urls, item)
-			// If a url is enabled enable that domain
-			domains = append(domains, parsedUrl.Host)
+			// TODO: Shift this logic into the dns proxy or firewall
+			if firewallMethod == models.AllowList {
+				slog.Debug("Adding domain to allow list because of url rule", "domain", parsedUrl.Host)
+				domains = append(domains, parsedUrl.Host)
+			} else if firewallMethod == models.BlockList {
+				// Don't add the domain as this would cause it to get blocked
+				// at the dns level before the http proxy could inspect the request
+				slog.Debug("Not adding domain to block list (url rule)", "domain", parsedUrl.Host)
+			}
 			continue
 		}
 

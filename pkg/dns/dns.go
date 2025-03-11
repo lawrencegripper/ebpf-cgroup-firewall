@@ -23,7 +23,7 @@ type DNSProxy struct {
 
 // StartDNSMonitoringProxy configures eBPF to redirect DNS requests for the specified cgroup to a local DNS server
 // which blocks requests to the specified domains.
-func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.DnsFirewall, allowDNSRequestForBlocked bool) (*DNSProxy, error) {
+func StartDNSMonitoringProxy(listenPort int, domains []string, firewall ebpf.DnsFirewall, allowDNSRequestForBlocked bool) (*DNSProxy, error) {
 	// Start the DNS proxy
 	slog.Debug("Starting DNS server", "port", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
@@ -35,7 +35,7 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.Dn
 	}
 	downstreamServerAddr := config.Servers[0] + ":" + config.Port
 	slog.Debug("Using downstream DNS resolver", "address", downstreamServerAddr)
-	if firewall.FirewallMethod == models.AllowList {
+	if firewall.GetFirewallMethod() == models.AllowList {
 		err := firewall.AddIPToFirewall(config.Servers[0], &ebpf.Reason{
 			Kind:    ebpf.FromDnsRequest,
 			Comment: "when configured as allow list ensure we can call downstream dns server",
@@ -53,7 +53,7 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall *ebpf.Dn
 		DownstreamServerAddr:      downstreamServerAddr,
 		allowDNSRequestForBlocked: allowDNSRequestForBlocked,
 	}
-	server := &dns.Server{Addr: fmt.Sprintf(":%d", listenPort), Net: "udp", Handler: serverHandler}
+	server := &dns.Server{Addr: fmt.Sprintf("0.0.0.0:%d", listenPort), Net: "udp", Handler: serverHandler}
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
@@ -153,7 +153,7 @@ type blockingDNSHandler struct {
 	firewallDomains           []string
 	BlockLog                  []dnsBlockResult
 	blockLogMu                sync.Mutex
-	dnsFirewall               *ebpf.DnsFirewall
+	dnsFirewall               ebpf.DnsFirewall
 	downstreamClient          *dns.Client
 	DownstreamServerAddr      string
 	allowDNSRequestForBlocked bool
@@ -192,7 +192,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		requestIsNotAllowed := false
 
-		if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.AllowList {
+		if !domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.GetFirewallMethod() == models.AllowList {
 			if b.allowDNSRequestForBlocked {
 				requestIsNotAllowed = true
 			} else {
@@ -202,21 +202,26 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				}
 				addToBlockLog(b, q, matchedBecause)
 
+				pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
+				if err != nil {
+					slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
+				}
+
 				slog.Warn("DNS BLOCKED",
 					"reason", "NotInAllowList",
 					"explaination", "Domain doesn't match any allowlist prefixes",
 					"blocked", true,
 					"blockedAt", "dns",
 					"domain", q.Name,
-					"pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
-					"cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
-					"firewallMethod", b.dnsFirewall.FirewallMethod.String(),
+					"pid", pid,
+					"cmd", cmd,
+					"firewallMethod", b.dnsFirewall.GetFirewallMethod().String(),
 				)
 				return
 			}
 		}
 
-		if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.BlockList {
+		if domainMatchedFirewallDomains && b.dnsFirewall != nil && b.dnsFirewall.GetFirewallMethod() == models.BlockList {
 			if b.allowDNSRequestForBlocked {
 				requestIsNotAllowed = true
 			} else {
@@ -228,15 +233,19 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
 
+				pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
+				if err != nil {
+					slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
+				}
 				slog.Warn("DNS BLOCKED",
 					"reason", "InBlockList",
 					"explaination", explaination,
 					"blocked", true,
 					"blockedAt", "dns",
 					"domain", q.Name,
-					"pid", b.dnsFirewall.DnsTransactionIdToPid[r.Id],
-					"cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
-					"firewallMethod", b.dnsFirewall.FirewallMethod.String())
+					"pid", pid,
+					"cmd", cmd,
+					"firewallMethod", b.dnsFirewall.GetFirewallMethod().String())
 				return
 			}
 		}
@@ -244,7 +253,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			slog.Debug(
 				"DNS request which would have been blocked was allowed due to --allow-dns-request",
 				"domain", q.Name,
-				"firewallMethod", b.dnsFirewall.FirewallMethod.String(),
+				"firewallMethod", b.dnsFirewall.GetFirewallMethod().String(),
 			)
 		}
 
@@ -263,7 +272,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			}
 		}
 
-		if b.dnsFirewall != nil && b.dnsFirewall.FirewallMethod == models.LogOnly {
+		if b.dnsFirewall != nil && b.dnsFirewall.GetFirewallMethod() == models.LogOnly {
 			// Do nothing
 		} else {
 			//                         👇 Don't add the ip if we're allowing dns requests for blocked stuff
