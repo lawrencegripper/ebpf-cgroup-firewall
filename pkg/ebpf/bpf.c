@@ -15,12 +15,8 @@
 
 #define __section(NAME)
 
-struct svc_addr
-{
-    __be32 addr;
-    __be16 port;
-};
 
+// This event is sent via the ring buffer to userspace to log the actions of the firewall
 struct event
 {
     __u32 pid;
@@ -35,6 +31,7 @@ struct event
 };
 struct event *unused __attribute__((unused));
 
+// These consts are used to identify what kind of evens
 const __u16 DNS_PROXY_PACKET_BYPASS_TYPE = 1;
 const __u16 DNS_REDIRECT_TYPE = 11;
 const __u16 LOCALHOST_PACKET_BYPASS_TYPE = 12;
@@ -42,10 +39,38 @@ const __u16 HTTP_PROXY_PACKET_BYPASS_TYPE = 2;
 const __u16 HTTP_REDIRECT_TYPE = 22;
 const __u16 PROXY_PID_BYPASS_TYPE = 23;
 
-// Force emitting struct event into the ELF.
-// struct event *unused __attribute__((unused));
-// Force emitting struct event into the ELF.
-// const struct event *unused __attribute__((unused));
+// These are real consts to help with reability only
+
+const __u32 ADDRESS_LOCALHOST_NETBYTEORDER = bpf_htonl(0x7f000001);
+// Different firewall modes
+const __u16 FIREWALL_MODE_LOG_ONLY = 0;
+const __u16 FIREWALL_MODE_ALLOW_LIST = 1;
+const __u16 FIREWALL_MODE_BLOCK_LIST = 2;
+// Return codes for Egress program
+const bool EGRESS_ALLOW_PACKET = 1;
+const bool EGRESS_DENY_PACKET = 0;
+
+// These consts are set by the userland program at runtime
+
+/* DNS Proxy Port - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy */
+volatile const __u32 const_dns_proxy_port;
+/* DNS Proxy PID - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy server. */
+volatile const __u32 const_proxy_pid;
+/* Ports where the userland transparent http proxy runs */
+volatile const __u32 const_http_proxy_port;
+volatile const __u32 const_https_proxy_port;
+/* Firewall mode - This is set by the go code when loading the eBPF so we can run in firewall mode
+ 0 = allow all outbound - logOnly mode
+ 1 = block all outbound other than items on allow list
+ 2 = block outbound to items on the block list
+*/
+volatile const __u16 const_firewall_mode;
+/* 
+This is the address where the DNS and HTTP proxy server is listening.
+In the case of docker cgroup this might be 172.17.0.1 or in the normal 
+case of non-isolated network cgrou it'll be 127.0.0.1
+*/
+volatile const __u32 const_mitm_proxy_address = ADDRESS_LOCALHOST_NETBYTEORDER;
 
 // ring buffer used to by userspace to subscribe to events
 struct
@@ -90,15 +115,6 @@ struct
     __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } src_port_to_sock_client SEC(".maps");
 
-// struct 
-// {
-//     __uint(type, BPF_MAP_TYPE_HASH);
-//     __uint(map_flags, BPF_F_NO_PREALLOC);
-//     __type(key, __u64);
-//     __type(value, __u64);
-//     __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
-// } sock_server_to_sock_client SEC(".maps");
-
 /* Map for allowed IP addresses from userspace. This is populated with the responses to dns queries */
 struct
 {
@@ -119,51 +135,13 @@ struct
     __uint(max_entries, 10000);
 } socket_pid_map SEC(".maps");
 
-/* DNS Proxy Port - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy */
-volatile const __u32 const_dns_proxy_port;
-/* DNS Proxy PID - This is set by the go code when loading the eBPF so each cgroup has its own DNS proxy
-    server.
-*/
-volatile const __u32 const_proxy_pid;
-
-volatile const __u32 const_http_proxy_port;
-volatile const __u32 const_https_proxy_port;
-
-// volatile const __u32 const_;
-// volatile const __u32 const_dns_proxy_pid;
-
-
-/* Firewall mode - This is set by the go code when loading the eBPF so we can run in firewall mode
- 0 = allow all outbound - logOnly mode
- 1 = block all outbound other than items on allow list
- 2 = block outbound to items on the block list
-*/
-volatile const __u16 const_firewall_mode;
-
-/* 
-This is the address where the DNS and HTTP proxy server is listening.
-In the case of docker cgroup this might be 172.17.0.1 or in the normal 
-case of non-isolated network cgrou it'll be 127.0.0.1
-*/
-const __u32 ADDRESS_LOCALHOST_NETBYTEORDER = bpf_htonl(0x7f000001);
-volatile const __u32 const_mitm_proxy_address = ADDRESS_LOCALHOST_NETBYTEORDER;
-
-const __u16 FIREWALL_MODE_LOG_ONLY = 0;
-const __u16 FIREWALL_MODE_ALLOW_LIST = 1;
-const __u16 FIREWALL_MODE_BLOCK_LIST = 2;
-// This is to help with reability only
-const bool EGRESS_ALLOW_PACKET = 1;
-const bool EGRESS_DENY_PACKET = 1;
 
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx)
 {
-    struct sockaddr_in sa = {};
-    struct svc_addr *orig;
-
     __u64 socketCookie = bpf_get_socket_cookie(ctx);
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
-    bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);    
+    bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);
 
     bool didRedirect = false;
 
@@ -241,34 +219,11 @@ int connect4(struct bpf_sock_addr *ctx)
     return 1;
 }
 
-SEC("cgroup/getpeername4")
-int getpeername4(struct bpf_sock_addr *ctx)
-{
-    struct svc_addr *orig;
-    return 1;
-}
-
 // Map the outgoing socket to the incoming socket seen in userland proxy
 // via the src port and the socket cookie
 SEC("sockops")
 int cg_sock_ops(struct bpf_sock_ops *ctx) {
     if (ctx->family != AF_INET) return 0;
-
-    // __u64 socketCookie = bpf_get_socket_cookie(ctx);
-    // __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
-
-    // // Outbound conns from the proxy pid don't need to be tracked
-    // bool isFromProxyPid = (pid ? *pid : -1) == const_proxy_pid;
-    // if (isFromProxyPid) {
-    //     return EGRESS_ALLOW_PACKET;
-    // } else {
-    //     // Outbound connection established (ie. Client calling out)
-    //     // So a client program has done `curl example.com` 
-    //     if (ctx->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
-    //         __u16 src_port = ctx->local_port;
-    //         bpf_map_update_elem(&src_port_to_sock_client, &src_port, &socketCookie, 0);
-    //     }
-    // }
 
     // Outbound connection established (ie. Client calling out)
     // So a client program has done `curl example.com` 
@@ -278,20 +233,8 @@ int cg_sock_ops(struct bpf_sock_ops *ctx) {
         bpf_map_update_elem(&src_port_to_sock_client, &src_port, &cookie, 0);
     }
 
-//   // Inbound connection estabilished (ie. Server receiving call)
-//   // Our client program `curl example.com` has been redirected to our 
-//   // proxy server
-//   if (ctx->op == BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB) {
-//     __u64 cookie = bpf_get_socket_cookie(ctx);
-//     __u16 sender_port = ctx->local_port;
-    
-//     __u64 *sock_client = bpf_map_lookup_elem(&src_port_to_sock_client, &sender_port);
-//     if (sock_client) {
-//       bpf_map_update_elem(&sock_server_to_sock_client, &cookie, &sock_client, 0);
-//     }
-//   }
-
-  return 0;
+    // Allow things to continue, we only need this for correlation
+    return 0;
 }
 
 

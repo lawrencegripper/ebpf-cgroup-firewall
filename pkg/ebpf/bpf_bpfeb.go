@@ -70,7 +70,6 @@ type bpfProgramSpecs struct {
 	CgSockOps       *ebpf.ProgramSpec `ebpf:"cg_sock_ops"`
 	CgroupSkbEgress *ebpf.ProgramSpec `ebpf:"cgroup_skb_egress"`
 	Connect4        *ebpf.ProgramSpec `ebpf:"connect4"`
-	Getpeername4    *ebpf.ProgramSpec `ebpf:"getpeername4"`
 }
 
 // bpfMapSpecs contains maps before they are loaded into the kernel.
@@ -130,7 +129,6 @@ type bpfPrograms struct {
 	CgSockOps       *ebpf.Program `ebpf:"cg_sock_ops"`
 	CgroupSkbEgress *ebpf.Program `ebpf:"cgroup_skb_egress"`
 	Connect4        *ebpf.Program `ebpf:"connect4"`
-	Getpeername4    *ebpf.Program `ebpf:"getpeername4"`
 }
 
 func (p *bpfPrograms) Close() error {
@@ -138,7 +136,6 @@ func (p *bpfPrograms) Close() error {
 		p.CgSockOps,
 		p.CgroupSkbEgress,
 		p.Connect4,
-		p.Getpeername4,
 	)
 }
 
