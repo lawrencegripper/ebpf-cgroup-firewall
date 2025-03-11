@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -72,6 +71,17 @@ func (d *DomainList) String() string {
 	return result.String()
 }
 
+// Ensure the interface is implemented
+var _ DnsFirewall = &EgressFirewall{}
+
+// DnsFirewall is an interface for the DNS proxy
+type DnsFirewall interface {
+	AddIPToFirewall(ip string, reason *Reason) error
+	GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error)
+	GetFirewallMethod() models.FirewallMethod
+	TrackIPToDomain(ip string, domain string)
+}
+
 type EgressFirewall struct {
 	Spec                  *ebpf.CollectionSpec
 	Link                  *link.Link
@@ -82,20 +92,13 @@ type EgressFirewall struct {
 	FirewallIPsWithReason *utils.GenericSyncMap[string, *Reason]
 	RingBufferReader      *ringbuf.Reader
 	FirewallMethod        models.FirewallMethod
-	DnsTransactionIdToPid *utils.GenericSyncMap[uint16, uint32]
-	DnsTransactionIdToCmd *utils.GenericSyncMap[uint16, string]
-	blockedEvents         []bpfEvent
-	blockedEventsMutex    sync.Mutex
+	dnsTransactionIdToPid *utils.GenericSyncMap[uint16, uint32]
+	dnsTransactionIdToCmd *utils.GenericSyncMap[uint16, string]
 	ipDomainTracking      *utils.GenericSyncMap[string, *DomainList]
 }
 
-func (e *EgressFirewall) BlockedEvents() []bpfEvent {
-	e.blockedEventsMutex.Lock()
-	defer e.blockedEventsMutex.Unlock()
-
-	blockedEventsCopy := make([]bpfEvent, len(e.blockedEvents))
-	copy(blockedEventsCopy, e.blockedEvents)
-	return blockedEventsCopy
+func (e *EgressFirewall) GetFirewallMethod() models.FirewallMethod {
+	return e.FirewallMethod
 }
 
 func (e *EgressFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
@@ -114,6 +117,22 @@ func (e *EgressFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
 	}
 
 	return pid, nil
+}
+
+func (e *EgressFirewall) GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error) {
+	pid, ok := e.dnsTransactionIdToPid.Load(dnsTransactionId)
+	if !ok {
+		slog.Error("Failed to get PID from DNS transaction ID")
+		pid = 0
+		return pid, "unknown", fmt.Errorf("failed to get PID from DNS transaction ID")
+	}
+	cmd, ok := e.dnsTransactionIdToCmd.Load(dnsTransactionId)
+	if !ok {
+		slog.Error("Failed to get command from DNS transaction ID")
+		cmd = "unknown"
+		return pid, cmd, fmt.Errorf("failed to get PID and command from DNS transaction ID")
+	}
+	return pid, cmd, nil
 }
 
 func (e *EgressFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, error) {
@@ -329,10 +348,8 @@ func AttachRedirectorToCGroup(
 		Objects:               &obj,
 		RingBufferReader:      ringBufferEventsReader,
 		FirewallMethod:        firewallMethod,
-		DnsTransactionIdToPid: new(utils.GenericSyncMap[uint16, uint32]),
-		DnsTransactionIdToCmd: new(utils.GenericSyncMap[uint16, string]),
-		blockedEvents:         []bpfEvent{},
-		blockedEventsMutex:    sync.Mutex{},
+		dnsTransactionIdToPid: new(utils.GenericSyncMap[uint16, uint32]),
+		dnsTransactionIdToCmd: new(utils.GenericSyncMap[uint16, string]),
 		ipDomainTracking:      new(utils.GenericSyncMap[string, *DomainList]),
 		FirewallIPsWithReason: new(utils.GenericSyncMap[string, *Reason]),
 	}
@@ -451,12 +468,6 @@ func (e *EgressFirewall) monitorRingBufferEventfunc() {
 				"firewallMethod", e.FirewallMethod.String(),
 				"redirectedByeBPF", event.HasBeenRedirected,
 			)
-
-			// Writing blocked events is nice to have, if we're locked then skip em
-			// rather than stack them up
-			e.blockedEventsMutex.Lock()
-			e.blockedEvents = append(e.blockedEvents, event)
-			e.blockedEventsMutex.Unlock()
 		} else if logger.ShowDebugLogs {
 			slog.Debug(
 				"Packet allowed",
@@ -475,8 +486,8 @@ func (e *EgressFirewall) monitorRingBufferEventfunc() {
 
 		if event.ByPassType == 1 || event.ByPassType == 11 {
 			if event.DnsTransactionId != 0 {
-				e.DnsTransactionIdToPid.Store(event.DnsTransactionId, event.Pid)
-				e.DnsTransactionIdToCmd.Store(event.DnsTransactionId, cmdRun)
+				e.dnsTransactionIdToPid.Store(event.DnsTransactionId, event.Pid)
+				e.dnsTransactionIdToCmd.Store(event.DnsTransactionId, cmdRun)
 			}
 		}
 	}
