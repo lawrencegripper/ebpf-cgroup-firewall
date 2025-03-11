@@ -23,7 +23,7 @@ struct event {
   bool allowed;
   __u32 ip;
   __u32 originalIp;
-  __u16 byPassType;
+  __u16 eventType; 
   __u16 dnsTransactionId;
   bool pidResolved;
   bool hasBeenRedirected;
@@ -51,21 +51,22 @@ const bool EGRESS_DENY_PACKET = 0;
 
 // These consts are set by the userland program at runtime
 
-/* DNS Proxy Port - This is set by the go code when loading the eBPF so each
- * cgroup has its own DNS proxy */
+// DNS Proxy Port - This is set by the go code when loading the eBPF so each
+// cgroup has its own DNS proxy
 volatile const __u32 const_dns_proxy_port;
-/* DNS Proxy PID - This is set by the go code when loading the eBPF so each
- * cgroup has its own DNS proxy server. */
+
+// DNS Proxy PID - This is set by the go code when loading the eBPF so each
+// cgroup has its own DNS proxy server.
 volatile const __u32 const_proxy_pid;
-/* Ports where the userland transparent http proxy runs */
+
+// Ports where the userland transparent http proxy runs
 volatile const __u32 const_http_proxy_port;
 volatile const __u32 const_https_proxy_port;
-/* Firewall mode - This is set by the go code when loading the eBPF so we can
- run in firewall mode 0 = allow all outbound - logOnly mode 1 = block all
- outbound other than items on allow list 2 = block outbound to items on the
- block list
-*/
+
+// Firewall mode - This is set by the go code when loading the eBPF
+// see FIREWALL_MODE_* consts for values
 volatile const __u16 const_firewall_mode;
+
 /*
 This is the address where the DNS and HTTP proxy server is listening.
 In the case of docker cgroup this might be 172.17.0.1 or in the normal
@@ -79,14 +80,16 @@ struct {
   __uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
-// Two socket cookies. SockClient and SockServer.
+// Note:
+// Two socket are relevant. SockClient and SockServer
 // SockClient is the one created when calling the server
 // SockServer is the one create on receiving server
 // These two are mapped together based on us being both the client
 // and the server. We can track src port on sockClient and
 // match to sockServer via `sockops` ebpf progam
+// We use src port to map from server back to client
 
-/* Map the original destination to socket cookie */
+// Map the original destination to socket cookie
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __uint(map_flags, BPF_F_NO_PREALLOC);
@@ -95,6 +98,7 @@ struct {
   __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } sock_client_to_original_ip SEC(".maps");
 
+// Map the original destination port (before redirect) to client socket cookie
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __uint(map_flags, BPF_F_NO_PREALLOC);
@@ -103,6 +107,7 @@ struct {
   __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } sock_client_to_original_port SEC(".maps");
 
+// Used by proxy on receiving request. Maps the src port to the client socket cookie
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __uint(map_flags, BPF_F_NO_PREALLOC);
@@ -111,8 +116,8 @@ struct {
   __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } src_port_to_sock_client SEC(".maps");
 
-/* Map for allowed IP addresses from userspace. This is populated with the
- * responses to dns queries */
+// Map for allowed IP addresses from userspace. This is populated with the
+// responses to dns queries
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __type(key, __u32);
@@ -124,13 +129,15 @@ struct {
   // other way
 } firewall_ip_map SEC(".maps");
 
-/* Map for tracking socket cookie to pid mapping */
+// Map for tracking socket cookie to pid mapping
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __type(key, __u64);
   __type(value, __u32);
   __uint(max_entries, 10000);
 } socket_pid_map SEC(".maps");
+
+// eBPF Programs
 
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx) {
@@ -178,7 +185,7 @@ int connect4(struct bpf_sock_addr *ctx) {
         .allowed = true,
         .ip = bpf_ntohl(ctx->user_ip4),
         .originalIp = original_ip,
-        .byPassType = HTTP_REDIRECT_TYPE,
+        .eventType = HTTP_REDIRECT_TYPE,
         .hasBeenRedirected = true,
     };
 
@@ -199,7 +206,7 @@ int connect4(struct bpf_sock_addr *ctx) {
         .allowed = true,
         .ip = bpf_ntohl(ctx->user_ip4),
         .originalIp = original_ip,
-        .byPassType = DNS_REDIRECT_TYPE,
+        .eventType = DNS_REDIRECT_TYPE,
         .hasBeenRedirected = true,
     };
 
@@ -239,9 +246,9 @@ int cg_sock_ops(struct bpf_sock_ops *ctx) {
 SEC("cgroup_skb/egress")
 int cgroup_skb_egress(struct __sk_buff *skb) {
   struct iphdr iph;
-  /* Load packet header */
+  // Load packet header
   bpf_skb_load_bytes(skb, 0, &iph, sizeof(struct iphdr));
-  /* Use the socket cookie to lookup the calling PID */
+  // Use the socket cookie to lookup the calling PID
   __u64 socketCookie = bpf_get_socket_cookie(skb);
   __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
 
@@ -254,7 +261,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
         .ip = bpf_ntohl(iph.daddr),
         .pid = pid ? *pid : 0,
         .pidResolved = pid ? true : false,
-        .byPassType = PROXY_PID_BYPASS_TYPE,
+        .eventType = PROXY_PID_BYPASS_TYPE,
     };
 
     bpf_ringbuf_output(&events, &info, sizeof(info), 0);
@@ -285,7 +292,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
         .pid = pid ? *pid : 0,
         .pidResolved = pid ? true : false,
         .hasBeenRedirected = isRedirectedByToOurProxy,
-        .byPassType = LOCALHOST_PACKET_BYPASS_TYPE,
+        .eventType = LOCALHOST_PACKET_BYPASS_TYPE,
     };
 
     bpf_ringbuf_output(&events, &info, sizeof(info), 0);
@@ -328,7 +335,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
           .pidResolved = pid ? true : false,
           .originalIp = bpf_ntohl(original_ip),
           .hasBeenRedirected = isRedirectedByToOurProxy,
-          .byPassType = DNS_PROXY_PACKET_BYPASS_TYPE,
+          .eventType = DNS_PROXY_PACKET_BYPASS_TYPE,
           .dnsTransactionId = dnsTransactionId,
       };
 
@@ -348,7 +355,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
     port = tcp.dest;
   }
 
-  /* Check if the destination IPs are in "blocked" map */
+  // Check if the destination IPs are in "blocked" map
   bool mode_log_only = const_firewall_mode == FIREWALL_MODE_LOG_ONLY;
 
   // Setup default action based on firewall mode
@@ -378,7 +385,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
           .pidResolved = pid ? true : false,
           .originalIp = bpf_ntohl(original_ip),
           .hasBeenRedirected = isRedirectedByToOurProxy,
-          .byPassType = HTTP_PROXY_PACKET_BYPASS_TYPE,
+          .eventType = HTTP_PROXY_PACKET_BYPASS_TYPE,
       };
 
       bpf_ringbuf_output(&events, &info, sizeof(info), 0);
@@ -392,7 +399,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
       .originalIp = bpf_ntohl(original_ip),
       .hasBeenRedirected = isRedirectedByToOurProxy,
       .allowed = destination_allowed,
-      .byPassType = 0,
+      .eventType = 0,
   };
 
   info.pid = pid ? *pid : 0;
@@ -400,6 +407,8 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
   bpf_ringbuf_output(&events, &info, sizeof(info), 0);
   return destination_allowed;
 }
+
+// Helper functions used in eBPF programs
 
 __u16 getTransactionIdFromDnsHeader(struct __sk_buff *skb,
                                     __u16 skbReadOffset) {
