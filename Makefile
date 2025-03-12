@@ -46,3 +46,9 @@ soaktest: build ## Run the soak test suite (15min duration)
 
 .PHONY: ci
 ci: lint test generate smoketest ## Run CI (lint, generate, test, smoketest)
+
+.PHONY: release
+release: ## Create a release
+	git tag -a v0.0.3 -m "Alpha 2"; git push origin "v0.0.3"
+	goreleaser release --clean
+	
