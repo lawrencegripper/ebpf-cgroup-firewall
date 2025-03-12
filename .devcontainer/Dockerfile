@@ -20,3 +20,8 @@ RUN apt-get update && apt-get install -y ncat curl bpfcc-tools clang-format
 
 # Avoid git safety messages on codespace build
 RUN git config --global --add safe.directory '*'
+
+# Install go releaser
+RUN echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list && \
+    sudo apt update && \
+    sudo apt install goreleaser
