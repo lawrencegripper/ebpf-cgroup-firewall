@@ -6,13 +6,13 @@ require (
 	github.com/alecthomas/kong v1.5.1
 	github.com/cilium/ebpf v0.16.1-0.20241001200337-21be59580a51
 	github.com/elazarl/goproxy v1.7.0
+	github.com/inconshreveable/go-vhost v1.0.0
 )
 
 // replace github.com/elazarl/goproxy v1.7.0 => ./goproxy
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/inconshreveable/go-vhost v1.0.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	golang.org/x/text v0.22.0 // indirect
