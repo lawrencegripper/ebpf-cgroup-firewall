@@ -1,2 +1,4 @@
 bin/ebpf-cgroup-firewall
 log.json
+# Added by goreleaser init:
+dist/
