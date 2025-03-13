@@ -55,7 +55,7 @@ close_fold() {
     echo "⏱️ $elapsed seconds"
     # Write timing information to log file
     if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-        echo "$title: ${elapsed}s" >> stopwatch.log
+        echo "$title: ${elapsed}s" >> /tmp/stopwatch.log
     fi
 }
 

@@ -48,7 +48,7 @@ jobs:
       run: sudo ./bin/ebpf-cgroup-firewall run --log-file /tmp/ebpf-cgroup-firewall.log ./script/real-world.sh
 
     - name: get stopwatch data
-      run: cat ./stopwatch.log
+      run: cat /tmp/stopwatch.log
 
     - name: Upload firewall logs as artifacts
       uses: actions/upload-artifact@v4
