@@ -10,7 +10,7 @@ on:
       - main
 
 jobs:
-  real-world-no-firewall:
+  no-firewall:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,7 +20,7 @@ jobs:
     - name: Run `real-world.sh` without firewall
       run: ./script/real-world.sh
 
-  real-world-with-firewall:
+  with-firewall:
     runs-on: ubuntu-latest
 
     steps:
@@ -42,11 +42,15 @@ jobs:
         sudo mkcert -install
 
     - name: Run `real-world.sh` with firewall
-      run: ./script/real-world.sh
+      run: sudo ./script/real-world.sh
       env:
         ATTACH: true
 
-    - name: Firewall logs
-      run: cat /tmp/ebpf-cgroup-firewall.log
+    - name: Upload firewall logs as artifacts
+      uses: actions/upload-artifact@v3
       if: always()
+      with:
+        name: firewall-logs
+        path: /tmp/ebpf-cgroup-firewall.log
+        retention-days: 5
 
