@@ -20,9 +20,6 @@ jobs:
     - name: Run `real-world.sh` without firewall
       run: ./script/real-world.sh
 
-    - name: Download a large file
-      run: time curl -JLO https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso
-    
   real-world-with-firewall:
     runs-on: ubuntu-latest
 
@@ -31,7 +28,9 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Build
-      run: make build
+      run: |
+        sudo ./script/linux-dependencies
+        make build
     
     - name: Install mkcert
       run: |
@@ -41,17 +40,12 @@ jobs:
         sudo chmod +x mkcert-v*-linux-amd64
         sudo mv mkcert-v*-linux-amd64 /usr/local/bin/mkcert
         sudo mkcert -install
-    
-    - name: Attach firewall
-      run: |
-        ./bin/ebpf-cgroup-firewall attach --log-file /tmp/ebpf-cgroup-firewall.log &
 
     - name: Run `real-world.sh` with firewall
       run: ./script/real-world.sh
+      env:
+        ATTACH: true
 
-    - name: Download a large file
-      run: time curl -JLO https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso
-    
     - name: Firewall logs
       run: cat /tmp/ebpf-cgroup-firewall.log
       if: always()
