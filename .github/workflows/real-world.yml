@@ -12,17 +12,20 @@ on:
 jobs:
   no-firewall:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        run-number: [1, 2, 3, 4, 5]
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
     - name: Run `real-world.sh` without firewall
-      run: ./script/real-world.sh
+      run: ./script/real-world.sh && cat ./stopwatch.log
 
   with-firewall:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        run-number: [1, 2, 3, 4, 5]
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -42,9 +45,10 @@ jobs:
         sudo mkcert -install
 
     - name: Run `real-world.sh` with firewall
-      run: sudo ./script/real-world.sh
-      env:
-        ATTACH: true
+      run: sudo ./bin/ebpf-cgroup-firewall run --log-file /tmp/ebpf-cgroup-firewall.log ./script/real-world.sh
+
+    - name: get stopwatch data
+      run: cat ./stopwatch.log
 
     - name: Upload firewall logs as artifacts
       uses: actions/upload-artifact@v3

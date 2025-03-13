@@ -37,6 +37,7 @@ assert_output_contains() {
 open_fold() {
     echo ""
     local title="$1"
+    start_time=$(date +%s)
     if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
         echo "::group::$title"
     else
@@ -49,6 +50,12 @@ close_fold() {
         echo "::endgroup::"
     else
         echo -e "\033[0;34m▲ End\033[0m"
+    fi
+    local elapsed=$(($(date +%s) - start_time))
+    echo "⏱️ $elapsed seconds"
+    # Write timing information to log file
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+        echo "$title: ${elapsed}s" >> stopwatch.log
     fi
 }
 
