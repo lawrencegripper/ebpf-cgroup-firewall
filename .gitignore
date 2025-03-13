@@ -2,3 +2,4 @@ bin/ebpf-cgroup-firewall
 log.json
 # Added by goreleaser init:
 dist/
+ubuntu-24.04.2-live-server-amd64.iso

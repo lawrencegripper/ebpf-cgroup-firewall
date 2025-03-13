@@ -1,0 +1,58 @@
+
+name: Real world
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  real-world-no-firewall:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run `real-world.sh` without firewall
+      run: ./script/real-world.sh
+
+    - name: Download a large file
+      run: time curl -JLO https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso
+    
+  real-world-with-firewall:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build
+      run: make build
+    
+    - name: Install mkcert
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libnss3-tools
+        curl -JLO "https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64"
+        sudo chmod +x mkcert-v*-linux-amd64
+        sudo mv mkcert-v*-linux-amd64 /usr/local/bin/mkcert
+        sudo mkcert -install
+    
+    - name: Attach firewall
+      run: |
+        ./bin/ebpf-cgroup-firewall attach --log-file /tmp/ebpf-cgroup-firewall.log &
+
+    - name: Run `real-world.sh` with firewall
+      run: ./script/real-world.sh
+
+    - name: Download a large file
+      run: time curl -JLO https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso
+    
+    - name: Firewall logs
+      run: cat /tmp/ebpf-cgroup-firewall.log
+      if: always()
+
