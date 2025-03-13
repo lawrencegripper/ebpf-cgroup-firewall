@@ -36,7 +36,7 @@ assert_output_contains() {
 
 open_fold() {
     echo ""
-    local title="$1"
+    title="$1"
     start_time=$(date +%s)
     if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
         echo "::group::$title"
