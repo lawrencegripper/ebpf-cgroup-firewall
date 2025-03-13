@@ -10,9 +10,9 @@ cd /tmp
 echo "Cloning traefik repository..."
 time git clone https://github.com/traefik/traefik.git
 
-time git checkout v3.3
-
 cd traefik
+
+time git checkout v3.3
 
 echo "Running make..."
 time make
