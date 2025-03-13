@@ -43,6 +43,7 @@ open_fold() {
     else
         echo -e "\033[0;34m▼ $title\033[0m"
     fi
+    touch /tmp/stopwatch.log
 }
 
 close_fold() {
@@ -53,10 +54,7 @@ close_fold() {
     fi
     local elapsed=$(($(date +%s) - start_time))
     echo "⏱️ $elapsed seconds"
-    # Write timing information to log file
-    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-        echo "$title: ${elapsed}s" >> /tmp/stopwatch.log
-    fi
+    echo "$title: ${elapsed}s" >> /tmp/stopwatch.log
 }
 
 run_firewall_test() {
