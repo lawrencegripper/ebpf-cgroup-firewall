@@ -90,3 +90,51 @@ Here we see `ebpf-cgroup-firewall attach` in one terminal and the `curl` in anot
     > $> ebpf-cgroup-firewall run --block-list google.com --allow-dns-request "curl -s --max-time 1 google.com"
 
     > WARN Packet BLOCKED blockedAt=packet blocked=true ip=142.250.187.206 ipResolvedForDomains=google.com. pid=52061 cmd="curl -s --max-time 1 google.com " reason=FromDNSRequest explaination="Matched Domain Prefix: google.com" firewallMethod=blocklist
+
+## Logs
+
+The firewall provides detailed logging for different types of requests:
+
+- DNS
+   `{"time":"2025-03-14T12:53:08.600372446Z","level":"WARN","msg":"BLOCKED","because":"NotInAllowList","blocked":true,"blockedAt":"dns","domains":"google.com.","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Domain matched blocklist prefix: google.com","pid":0,"port":"53","ip":"","originalIp":"unknown","url":"","cmd":"some-command"}`
+- HTTP/S
+   `{"time":"2025-03-14T12:55:55.10990631Z","level":"WARN","msg":"BLOCKED","because":"MatchedBlockListDomain","blocked":true,"blockedAt":"http","domains":"bing.com","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Matched URL Prefix: https://bing.com/bob","pid":351020,"port":"","ip":"","originalIp":"","url":"https://bing.com/bob","cmd":"curl -s --fail-with-body --output /dev/null --max-time 5 https://bing.com/bob "}`
+- Packet 
+   `{"time":"2025-03-14T12:51:09.104331257Z","level":"WARN","msg":"BLOCKED","because":"IPNotAllowed","blocked":true,"blockedAt":"packet","domains":"None","ruleSource":"Unknown","ruleSourceComment":"Unknown","pid":0,"port":"80","ip":"96.7.128.175","originalIp":"96.7.128.175","url":"","cmd":"unknown"}`
+
+See [./pkg/logging/request.go](./pkg/logger/request.go) for details on the fields that
+are available.
+
+With the `--log-file` parameter these are outputted to JSON so can be parsed with `jq` to
+get detailed information.
+
+Logs include correlating the request back to the `pid` and `cmdline` which caused it to be made, along with `ruleSource` and `ruleSourceComment` which explain why it was blocked.
+
+### Examples
+
+1. To see all DNS level blocking
+
+   ```
+   firewall-log.jsonl | jq -c 'select(.blocked==true and .blockedAt=="dns") | .domains'
+   "raw.githubusercontent.com."
+   "raw.githubusercontent.com."
+   ```
+
+2. To see all URL level blocks
+
+   ```
+   firewall-log.jsonl | jq -c 'select(.blocked==true and .blockedAt=="http") | .url'
+   ```
+
+### Detailed/Debug
+
+With `--debug` provided you'll receive additional logs, including details of requests which are allowed.
+
+These will include `eventType` and detail when eBPF has redirected or allowed a request to bypass a set of rules.
+
+See [logRedirectOrBypass](./pkg/ebpf/events.go) function for more details on the information present.
+
+```
+{"time":"2025-03-14T12:53:08.607137613Z","level":"INFO","msg":"DNS Redirect","eventType":"DNS Redirect","ip":"127.0.0.1","originalIp":"127.0.0.1","port":37020,"pid":347052,"cmd":"curl -s --fail-with-body --output /dev/null --max-time 1 google.com ","dnsTransactionId":0}
+{"time":"2025-03-14T12:53:08.604595069Z","level":"INFO","msg":"DNS Proxy Packet Bypass","eventType":"DNS Proxy Packet Bypass","ip":"127.0.0.1","originalIp":"127.0.0.1","port":37020,"pid":347052,"cmd":"curl -s --fail-with-body --output /dev/null --max-time 1 google.com ","dnsTransactionId":15224}
+```

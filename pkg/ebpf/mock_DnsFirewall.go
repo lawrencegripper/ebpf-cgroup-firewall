@@ -21,7 +21,7 @@ func (_m *MockDnsFirewall) EXPECT() *MockDnsFirewall_Expecter {
 }
 
 // AllowIPThroughFirewall provides a mock function with given fields: ip, reason
-func (_m *MockDnsFirewall) AllowIPThroughFirewall(ip string, reason *Reason) error {
+func (_m *MockDnsFirewall) AllowIPThroughFirewall(ip string, reason *models.RuleSource) error {
 	ret := _m.Called(ip, reason)
 
 	if len(ret) == 0 {
@@ -29,7 +29,7 @@ func (_m *MockDnsFirewall) AllowIPThroughFirewall(ip string, reason *Reason) err
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, *Reason) error); ok {
+	if rf, ok := ret.Get(0).(func(string, *models.RuleSource) error); ok {
 		r0 = rf(ip, reason)
 	} else {
 		r0 = ret.Error(0)
@@ -45,14 +45,14 @@ type MockDnsFirewall_AllowIPThroughFirewall_Call struct {
 
 // AllowIPThroughFirewall is a helper method to define mock.On call
 //   - ip string
-//   - reason *Reason
+//   - reason *models.RuleSource
 func (_e *MockDnsFirewall_Expecter) AllowIPThroughFirewall(ip interface{}, reason interface{}) *MockDnsFirewall_AllowIPThroughFirewall_Call {
 	return &MockDnsFirewall_AllowIPThroughFirewall_Call{Call: _e.mock.On("AllowIPThroughFirewall", ip, reason)}
 }
 
-func (_c *MockDnsFirewall_AllowIPThroughFirewall_Call) Run(run func(ip string, reason *Reason)) *MockDnsFirewall_AllowIPThroughFirewall_Call {
+func (_c *MockDnsFirewall_AllowIPThroughFirewall_Call) Run(run func(ip string, reason *models.RuleSource)) *MockDnsFirewall_AllowIPThroughFirewall_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(*Reason))
+		run(args[0].(string), args[1].(*models.RuleSource))
 	})
 	return _c
 }
@@ -62,7 +62,7 @@ func (_c *MockDnsFirewall_AllowIPThroughFirewall_Call) Return(_a0 error) *MockDn
 	return _c
 }
 
-func (_c *MockDnsFirewall_AllowIPThroughFirewall_Call) RunAndReturn(run func(string, *Reason) error) *MockDnsFirewall_AllowIPThroughFirewall_Call {
+func (_c *MockDnsFirewall_AllowIPThroughFirewall_Call) RunAndReturn(run func(string, *models.RuleSource) error) *MockDnsFirewall_AllowIPThroughFirewall_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -112,18 +112,17 @@ func (_c *MockDnsFirewall_GetFirewallMethod_Call) RunAndReturn(run func() models
 	return _c
 }
 
-// GetPidAndCommandFromDNSTransactionId provides a mock function with given fields: dnsTransactionId
-func (_m *MockDnsFirewall) GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error) {
+// GetPidFromDNSTransactionId provides a mock function with given fields: dnsTransactionId
+func (_m *MockDnsFirewall) GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error) {
 	ret := _m.Called(dnsTransactionId)
 
 	if len(ret) == 0 {
-		panic("no return value specified for GetPidAndCommandFromDNSTransactionId")
+		panic("no return value specified for GetPidFromDNSTransactionId")
 	}
 
 	var r0 uint32
-	var r1 string
-	var r2 error
-	if rf, ok := ret.Get(0).(func(uint16) (uint32, string, error)); ok {
+	var r1 error
+	if rf, ok := ret.Get(0).(func(uint16) (uint32, error)); ok {
 		return rf(dnsTransactionId)
 	}
 	if rf, ok := ret.Get(0).(func(uint16) uint32); ok {
@@ -132,45 +131,39 @@ func (_m *MockDnsFirewall) GetPidAndCommandFromDNSTransactionId(dnsTransactionId
 		r0 = ret.Get(0).(uint32)
 	}
 
-	if rf, ok := ret.Get(1).(func(uint16) string); ok {
+	if rf, ok := ret.Get(1).(func(uint16) error); ok {
 		r1 = rf(dnsTransactionId)
 	} else {
-		r1 = ret.Get(1).(string)
+		r1 = ret.Error(1)
 	}
 
-	if rf, ok := ret.Get(2).(func(uint16) error); ok {
-		r2 = rf(dnsTransactionId)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
+	return r0, r1
 }
 
-// MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetPidAndCommandFromDNSTransactionId'
-type MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call struct {
+// MockDnsFirewall_GetPidFromDNSTransactionId_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetPidFromDNSTransactionId'
+type MockDnsFirewall_GetPidFromDNSTransactionId_Call struct {
 	*mock.Call
 }
 
-// GetPidAndCommandFromDNSTransactionId is a helper method to define mock.On call
+// GetPidFromDNSTransactionId is a helper method to define mock.On call
 //   - dnsTransactionId uint16
-func (_e *MockDnsFirewall_Expecter) GetPidAndCommandFromDNSTransactionId(dnsTransactionId interface{}) *MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call {
-	return &MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call{Call: _e.mock.On("GetPidAndCommandFromDNSTransactionId", dnsTransactionId)}
+func (_e *MockDnsFirewall_Expecter) GetPidFromDNSTransactionId(dnsTransactionId interface{}) *MockDnsFirewall_GetPidFromDNSTransactionId_Call {
+	return &MockDnsFirewall_GetPidFromDNSTransactionId_Call{Call: _e.mock.On("GetPidFromDNSTransactionId", dnsTransactionId)}
 }
 
-func (_c *MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call) Run(run func(dnsTransactionId uint16)) *MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call {
+func (_c *MockDnsFirewall_GetPidFromDNSTransactionId_Call) Run(run func(dnsTransactionId uint16)) *MockDnsFirewall_GetPidFromDNSTransactionId_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run(args[0].(uint16))
 	})
 	return _c
 }
 
-func (_c *MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call) Return(_a0 uint32, _a1 string, _a2 error) *MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call {
-	_c.Call.Return(_a0, _a1, _a2)
+func (_c *MockDnsFirewall_GetPidFromDNSTransactionId_Call) Return(_a0 uint32, _a1 error) *MockDnsFirewall_GetPidFromDNSTransactionId_Call {
+	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call) RunAndReturn(run func(uint16) (uint32, string, error)) *MockDnsFirewall_GetPidAndCommandFromDNSTransactionId_Call {
+func (_c *MockDnsFirewall_GetPidFromDNSTransactionId_Call) RunAndReturn(run func(uint16) (uint32, error)) *MockDnsFirewall_GetPidFromDNSTransactionId_Call {
 	_c.Call.Return(run)
 	return _c
 }

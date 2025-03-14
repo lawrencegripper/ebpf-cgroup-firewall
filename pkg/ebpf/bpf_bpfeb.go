@@ -19,7 +19,8 @@ type bpfEvent struct {
 	_                 [1]byte
 	Ip                uint32
 	OriginalIp        uint32
-	EventType         uint16
+	EventType         uint8
+	_                 [1]byte
 	DnsTransactionId  uint16
 	PidResolved       bool
 	HasBeenRedirected bool

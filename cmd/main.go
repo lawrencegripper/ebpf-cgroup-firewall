@@ -202,7 +202,7 @@ func main() {
 		if firewallMethod == models.AllowList {
 			comment = "Allow IP as on explicit allow list"
 		}
-		if err := ebpfFirewall.AllowIPThroughFirewall(ip, &ebpf.Reason{Kind: ebpf.UserSpecified, Comment: comment}); err != nil {
+		if err := ebpfFirewall.AllowIPThroughFirewall(ip, &models.RuleSource{Kind: models.AllowUserSpecifiedIP, Comment: comment}); err != nil {
 			slog.Error("Failed to allow IP", ip, logger.SlogError(err))
 			os.Exit(108)
 		}
