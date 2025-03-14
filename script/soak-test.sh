@@ -51,13 +51,6 @@ while [ $SECONDS -lt $end_time ]; do
         assert_exit_code 0
     close_fold
 
-    # TODO: This is a foot gun, if we enable a url it should only enable for port 80 and 443 not open
-    # up the whole domain for any non http traffic
-    # open_fold "Soak Test: Allow SSH to GitHub (SSH) because domain is enabled automatically by full url"
-    #     run_test_command "nc -zv -w 1 github.com 22"
-    #     assert_exit_code 0
-    # close_fold
-
     open_fold "Soak Test: Block SSH to sourceforge (SSH) as not allowed"
         run_test_command "nc -zv -w 1 test.git.sourceforge.net 22"
         assert_exit_code 1

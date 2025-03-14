@@ -22,7 +22,7 @@ type DNSProxy struct {
 
 // StartDNSMonitoringProxy configures eBPF to redirect DNS requests for the specified cgroup to a local DNS server
 // which blocks requests to the specified domains.
-func StartDNSMonitoringProxy(listenPort int, domains []string, firewall ebpf.DnsFirewall, allowDNSRequestForBlocked bool) (*DNSProxy, error) {
+func StartDNSMonitoringProxy(listenPort int, firewallItems models.FirewallItems, firewall ebpf.DnsFirewall, allowDNSRequestForBlocked bool) (*DNSProxy, error) {
 	// Start the DNS proxy
 	slog.Debug("Starting DNS server", "port", listenPort)
 	// Defer to upstream DNS resolver using system's configured resolver
@@ -35,7 +35,7 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall ebpf.Dns
 	downstreamServerAddr := config.Servers[0] + ":" + config.Port
 	slog.Debug("Using downstream DNS resolver", "address", downstreamServerAddr)
 	if firewall.GetFirewallMethod() == models.AllowList {
-		err := firewall.AllowIPThroughFirewall(config.Servers[0], &models.RuleSource{
+		err := firewall.AllowIPThroughFirewall(config.Servers[0], ebpf.ViaAnyPort, &models.RuleSource{
 			Kind:    models.AllowUpstreamDNSServer,
 			Comment: "when configured as allow list ensure we can call downstream dns server",
 		})
@@ -46,7 +46,7 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall ebpf.Dns
 	}
 
 	serverHandler := &blockingDNSHandler{
-		firewallDomains:           domains,
+		firewallItems:             firewallItems,
 		downstreamClient:          downstreamClient,
 		dnsFirewall:               firewall,
 		DownstreamServerAddr:      downstreamServerAddr,
@@ -103,7 +103,7 @@ func (d *DNSProxy) Shutdown() error {
 }
 
 type blockingDNSHandler struct {
-	firewallDomains           []string
+	firewallItems             models.FirewallItems
 	dnsFirewall               ebpf.DnsFirewall
 	downstreamClient          *dns.Client
 	DownstreamServerAddr      string
@@ -123,6 +123,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	for _, q := range r.Question {
 		domainMatchedFirewallDomains := false
+		ipKind := ebpf.ViaAnyPort // These are domains which are only allowed via HTTP proxy
 		matchedBecause := ""
 
 		// Refuse IPv6 requests not supported atm
@@ -136,13 +137,30 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			return
 		}
 
+		slog.Debug("Firewall Items", "httpDomains", b.firewallItems.HttpDomains, "domains", b.firewallItems.Domains)
+
 		// Handle blocking
-		for _, domain := range b.firewallDomains {
+		// See if any domains are required due to urls like `https://bob.com/bill` in lists
+		for _, domain := range b.firewallItems.HttpDomains {
 			if strings.HasSuffix(q.Name, domain+".") {
 				domainMatchedFirewallDomains = true
 				matchedBecause = domain
+				// These domains are only allowed via HTTP proxy
+				ipKind = ebpf.ViaHttpProxyOnly
 			}
 		}
+
+		// See if any domains are required as top level domains
+		for _, domain := range b.firewallItems.Domains {
+			if strings.HasSuffix(q.Name, domain+".") {
+				domainMatchedFirewallDomains = true
+				matchedBecause = domain
+				// Everything is allowed on these domains, allow them out without a proxy
+				ipKind = ebpf.ViaAnyPort
+			}
+		}
+
+		slog.Debug("DNS request", "domain", q.Name, "firewallMatched", domainMatchedFirewallDomains, "ipKind", ipKind, "matchedBecause", matchedBecause)
 
 		requestIsNotAllowed := false
 
@@ -240,9 +258,10 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					if a, ok := answer.(*dns.A); ok {
 						err = b.dnsFirewall.AllowIPThroughFirewall(
 							a.A.String(),
+							ipKind,
 							&models.RuleSource{
 								Kind:    models.AllowIPAddedByDNS,
-								Comment: fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause),
+								Comment: fmt.Sprintf("Matched Domain Prefix: %s - httpOnly: %v", matchedBecause, ipKind == ebpf.ViaHttpProxyOnly),
 							},
 						)
 						if err != nil {

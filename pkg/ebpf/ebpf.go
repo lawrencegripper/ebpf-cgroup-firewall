@@ -49,9 +49,16 @@ func (d *DomainList) String() string {
 // Ensure the interface is implemented
 var _ DnsFirewall = &EgressFirewall{}
 
+type AddIPType int
+
+const (
+	ViaHttpProxyOnly AddIPType = 1
+	ViaAnyPort       AddIPType = 2
+)
+
 // DnsFirewall is an interface for the DNS proxy
 type DnsFirewall interface {
-	AllowIPThroughFirewall(ip string, reason *models.RuleSource) error
+	AllowIPThroughFirewall(ip string, ipType AddIPType, reason *models.RuleSource) error
 	GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error)
 	GetFirewallMethod() models.FirewallMethod
 	TrackIPToDomain(ip string, domain string)
@@ -138,9 +145,13 @@ func (e *EgressFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int,
 
 // AllowIPThroughFirewall adds an IP to the FirewallAllowedIpsMap in ebpf
 // which causes the cgroup_egress program to allow requests outbound to that ip
-func (e *EgressFirewall) AllowIPThroughFirewall(ip string, reason *models.RuleSource) error {
+func (e *EgressFirewall) AllowIPThroughFirewall(ip string, ipType AddIPType, reason *models.RuleSource) error {
 	slog.Debug("Adding IP to firewall_ips_map", "ip", ip, slog.String("reason", reason.Comment), slog.String("kind", reason.KindHumanReadable()))
 	firewallIps := e.Objects.bpfMaps.FirewallAllowedIpsMap
+	if ipType == ViaHttpProxyOnly {
+		// Only allow HTTP traffic
+		firewallIps = e.Objects.bpfMaps.FirewallAllowedHttpIpsMap
+	}
 
 	err := firewallIps.Put(models.IPToIntNetworkOrder(ip), models.IPToIntNetworkOrder(ip))
 	if err != nil {

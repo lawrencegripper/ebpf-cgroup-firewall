@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -132,7 +131,7 @@ func main() {
 		firewallList = blockList
 	}
 
-	firewallIps, firewallDomains, firewallUrls := splitDomainUrlOrIPListByType(firewallMethod, firewallList)
+	firewallItems := models.SplitDomainUrlOrIPListByType(firewallMethod, firewallList)
 
 	// get a port for the DNS server
 	dnsPort, err := utils.FindUnusedPort()
@@ -187,7 +186,7 @@ func main() {
 	// Start DNS proxy
 	dnsProxy, err := dns.StartDNSMonitoringProxy(
 		dnsPort,
-		firewallDomains,
+		firewallItems,
 		ebpfFirewall,
 		CmdOptions.Attach.AllowDNSRequest || CmdOptions.Run.AllowDNSRequest,
 	)
@@ -197,12 +196,12 @@ func main() {
 	}
 
 	// Add explicitly allowed ips
-	for _, ip := range firewallIps {
+	for _, ip := range firewallItems.IPs {
 		comment := "Blocked IP as on explicit block list"
 		if firewallMethod == models.AllowList {
 			comment = "Allow IP as on explicit allow list"
 		}
-		if err := ebpfFirewall.AllowIPThroughFirewall(ip, &models.RuleSource{Kind: models.AllowUserSpecifiedIP, Comment: comment}); err != nil {
+		if err := ebpfFirewall.AllowIPThroughFirewall(ip, ebpf.ViaAnyPort, &models.RuleSource{Kind: models.AllowUserSpecifiedIP, Comment: comment}); err != nil {
 			slog.Error("Failed to allow IP", ip, logger.SlogError(err))
 			os.Exit(108)
 		}
@@ -211,7 +210,7 @@ func main() {
 	slog.Debug("DNS monitoring proxy started successfully")
 
 	// Start http proxy
-	_, err = proxy.Start(httpProxyPort, httpsProxyPort, ebpfFirewall, dnsProxy, firewallDomains, firewallUrls)
+	_, err = proxy.Start(httpProxyPort, httpsProxyPort, ebpfFirewall, dnsProxy, firewallItems)
 	if err != nil {
 		slog.Error("Failed to start HTTP proxy", logger.SlogError(err))
 		os.Exit(101)
@@ -250,65 +249,6 @@ func main() {
 		os.Exit(107)
 	}
 	defer blockedFile.Close()
-}
-
-func splitDomainUrlOrIPListByType(firewallMethod models.FirewallMethod, allowList []string) ([]string, []string, []string) {
-	var ips []string
-	var domains []string
-	var urls []string
-
-	for _, item := range allowList {
-		// Simple IP check - looks for dots and numbers
-		if strings.Count(item, ".") == 3 {
-			isIP := true
-			for _, part := range strings.Split(item, ".") {
-				if len(part) == 0 {
-					isIP = false
-					break
-				}
-				for _, c := range part {
-					if c < '0' || c > '9' {
-						isIP = false
-						break
-					}
-				}
-			}
-			if isIP {
-				ips = append(ips, item)
-				continue
-			}
-		}
-
-		// Is it a url?
-		// TODO: Can we do better detection?
-		if strings.Contains(item, "://") {
-			parsedUrl, err := url.Parse(item)
-			if err != nil {
-				slog.Error("Failed to parse URL", "url", item, logger.SlogError(err))
-				panic(err)
-			}
-			urls = append(urls, item)
-			// TODO: Shift this logic into the dns proxy or firewall
-			if firewallMethod == models.AllowList {
-				slog.Debug("Adding domain to allow list because of url rule", "domain", parsedUrl.Host)
-				domains = append(domains, parsedUrl.Host)
-			} else if firewallMethod == models.BlockList {
-				// Don't add the domain as this would cause it to get blocked
-				// at the dns level before the http proxy could inspect the request
-				slog.Debug("Not adding domain to block list (url rule)", "domain", parsedUrl.Host)
-			}
-			continue
-		}
-
-		// If not hen it's a domain
-		domains = append(domains, item)
-		// If a domain is added automatically enable all urls under that domain on http and https
-		// TODO: Document this logic
-		urls = append(urls, fmt.Sprintf("http://%s", item))
-		urls = append(urls, fmt.Sprintf("https://%s", item))
-	}
-
-	return ips, domains, urls
 }
 
 func GetCGroupForCurrentProcess() string {
