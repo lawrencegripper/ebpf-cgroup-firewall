@@ -373,7 +373,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
 
   // Setup default action based on firewall mode
   bool destination_allowed = false;
-  
+
   // Is the ip allowed for any ports?
   bool ip_present_in_firewall_list =
       bpf_map_lookup_elem(&firewall_allowed_ips_map, &original_ip);
@@ -388,14 +388,11 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
     destination_allowed = true;
   }
 
-  bool is_http_proxy_port = (
-    port == bpf_htons(const_http_proxy_port) ||
-    port == bpf_htons(const_https_proxy_port)
-  );
+  bool is_http_proxy_port = (port == bpf_htons(const_http_proxy_port) ||
+                             port == bpf_htons(const_https_proxy_port));
 
-  bool is_redirected_to_http_proxy = (
-    iph.daddr == const_mitm_proxy_address && is_http_proxy_port
-  );
+  bool is_redirected_to_http_proxy =
+      (iph.daddr == const_mitm_proxy_address && is_http_proxy_port);
 
   if (is_redirected_to_http_proxy && ip_present_in_http_firewall_list) {
     destination_allowed = true;
