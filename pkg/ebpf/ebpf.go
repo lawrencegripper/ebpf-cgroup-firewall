@@ -4,9 +4,7 @@ package ebpf
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type event bpf bpf.c
 
 import (
-	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,29 +20,6 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
 )
-
-type AllowKind int
-
-const (
-	UserSpecified AllowKind = iota
-	FromDnsRequest
-)
-
-type Reason struct {
-	Kind    AllowKind
-	Comment string
-}
-
-func (r *Reason) KindHumanReadable() string {
-	switch r.Kind {
-	case UserSpecified:
-		return "UserSpecified"
-	case FromDnsRequest:
-		return "FromDNSRequest"
-	default:
-		return "Unknown"
-	}
-}
 
 type DomainList struct {
 	Domains *utils.GenericSyncMap[string, bool]
@@ -76,25 +51,24 @@ var _ DnsFirewall = &EgressFirewall{}
 
 // DnsFirewall is an interface for the DNS proxy
 type DnsFirewall interface {
-	AllowIPThroughFirewall(ip string, reason *Reason) error
-	GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error)
+	AllowIPThroughFirewall(ip string, reason *models.RuleSource) error
+	GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error)
 	GetFirewallMethod() models.FirewallMethod
 	TrackIPToDomain(ip string, domain string)
 }
 
 type EgressFirewall struct {
-	Spec                  *ebpf.CollectionSpec
-	Link                  *link.Link
-	SockOpsLink           *link.Link
-	EgressLink            *link.Link
-	Programs              bpfPrograms
-	Objects               *bpfObjects
-	FirewallIPsWithReason *utils.GenericSyncMap[string, *Reason]
-	RingBufferReader      *ringbuf.Reader
-	FirewallMethod        models.FirewallMethod
-	dnsTransactionIdToPid *utils.GenericSyncMap[uint16, uint32]
-	dnsTransactionIdToCmd *utils.GenericSyncMap[uint16, string]
-	ipDomainTracking      *utils.GenericSyncMap[string, *DomainList]
+	Spec                      *ebpf.CollectionSpec
+	Link                      *link.Link
+	SockOpsLink               *link.Link
+	EgressLink                *link.Link
+	Programs                  bpfPrograms
+	Objects                   *bpfObjects
+	FirewallIPsWithRuleSource *utils.GenericSyncMap[string, *models.RuleSource]
+	RingBufferReader          *ringbuf.Reader
+	FirewallMethod            models.FirewallMethod
+	dnsTransactionIdToPid     *utils.GenericSyncMap[uint16, uint32]
+	ipDomainTracking          *utils.GenericSyncMap[string, *DomainList]
 }
 
 func (e *EgressFirewall) GetFirewallMethod() models.FirewallMethod {
@@ -119,21 +93,16 @@ func (e *EgressFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
 	return pid, nil
 }
 
-func (e *EgressFirewall) GetPidAndCommandFromDNSTransactionId(dnsTransactionId uint16) (uint32, string, error) {
+func (e *EgressFirewall) GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error) {
 	// LoadAndDelete is used here so we don't have unbounded growth of the map
 	pid, ok := e.dnsTransactionIdToPid.LoadAndDelete(dnsTransactionId)
 	if !ok {
 		slog.Error("Failed to get PID from DNS transaction ID")
 		pid = 0
-		return pid, "unknown", fmt.Errorf("failed to get PID from DNS transaction ID")
+		return pid, fmt.Errorf("failed to get PID from DNS transaction ID")
 	}
-	cmd, ok := e.dnsTransactionIdToCmd.LoadAndDelete(dnsTransactionId)
-	if !ok {
-		slog.Error("Failed to get command from DNS transaction ID")
-		cmd = "unknown"
-		return pid, cmd, fmt.Errorf("failed to get PID and command from DNS transaction ID")
-	}
-	return pid, cmd, nil
+
+	return pid, nil
 }
 
 func (e *EgressFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int, error) {
@@ -169,7 +138,7 @@ func (e *EgressFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int,
 
 // AllowIPThroughFirewall adds an IP to the FirewallAllowedIpsMap in ebpf
 // which causes the cgroup_egress program to allow requests outbound to that ip
-func (e *EgressFirewall) AllowIPThroughFirewall(ip string, reason *Reason) error {
+func (e *EgressFirewall) AllowIPThroughFirewall(ip string, reason *models.RuleSource) error {
 	slog.Debug("Adding IP to firewall_ips_map", "ip", ip, slog.String("reason", reason.Comment), slog.String("kind", reason.KindHumanReadable()))
 	firewallIps := e.Objects.bpfMaps.FirewallAllowedIpsMap
 
@@ -179,11 +148,11 @@ func (e *EgressFirewall) AllowIPThroughFirewall(ip string, reason *Reason) error
 		return fmt.Errorf("adding IP to allowed_ips_map: %w", err)
 	}
 
-	if e.FirewallIPsWithReason == nil {
-		e.FirewallIPsWithReason = new(utils.GenericSyncMap[string, *Reason])
+	if e.FirewallIPsWithRuleSource == nil {
+		e.FirewallIPsWithRuleSource = new(utils.GenericSyncMap[string, *models.RuleSource])
 	}
 
-	e.FirewallIPsWithReason.Store(ip, reason)
+	e.FirewallIPsWithRuleSource.Store(ip, reason)
 
 	return nil
 }
@@ -349,154 +318,19 @@ func AttachRedirectorToCGroup(
 		// WARNING: If we don't keep an active reference to the link the the program will be unloaded
 		//          and stop doing network filtering. I know we don't use these actively but you must
 		//          leave them here!
-		Link:                  &cgroupLink,
-		SockOpsLink:           &sockOpsLink,
-		EgressLink:            &egressLink,
-		Objects:               &obj,
-		RingBufferReader:      ringBufferEventsReader,
-		FirewallMethod:        firewallMethod,
-		dnsTransactionIdToPid: new(utils.GenericSyncMap[uint16, uint32]),
-		dnsTransactionIdToCmd: new(utils.GenericSyncMap[uint16, string]),
-		ipDomainTracking:      new(utils.GenericSyncMap[string, *DomainList]),
-		FirewallIPsWithReason: new(utils.GenericSyncMap[string, *Reason]),
+		Link:                      &cgroupLink,
+		SockOpsLink:               &sockOpsLink,
+		EgressLink:                &egressLink,
+		Objects:                   &obj,
+		RingBufferReader:          ringBufferEventsReader,
+		FirewallMethod:            firewallMethod,
+		dnsTransactionIdToPid:     new(utils.GenericSyncMap[uint16, uint32]),
+		ipDomainTracking:          new(utils.GenericSyncMap[string, *DomainList]),
+		FirewallIPsWithRuleSource: new(utils.GenericSyncMap[string, *models.RuleSource]),
 	}
 
 	go ebpfFirewall.monitorRingBufferEventfunc()
 
 	slog.Debug("Successfully attached eBPF programs to cgroup blocking network traffic")
 	return ebpfFirewall, nil
-}
-
-func (e *EgressFirewall) monitorRingBufferEventfunc() {
-	var event bpfEvent
-	pid2CmdLineCache := map[int]string{}
-
-	for {
-		record, err := e.RingBufferReader.Read()
-		if err != nil {
-			if errors.Is(err, ringbuf.ErrClosed) {
-				slog.Debug("Received signal, exiting..")
-
-				return
-			}
-			slog.Error("reading from ringbuf reader", logger.SlogError(err))
-
-			continue
-		}
-
-		// Parse the ringbuf event entry into a bpfEvent structure.
-		if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
-			slog.Error("parsing ringbuf event", logger.SlogError(err))
-
-			continue
-		}
-
-		cmdRun := "unknown"
-		// Lookup the processPath for the event
-		if event.PidResolved {
-			cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", event.Pid)
-			cmdlineBytes, err := os.ReadFile(cmdlinePath)
-			if err == nil {
-				// cmdline args are null-terminated, replace nulls with spaces
-				cmdline := string(bytes.ReplaceAll(cmdlineBytes, []byte{0}, []byte{' '}))
-				pid2CmdLineCache[int(event.Pid)] = cmdline
-				cmdRun = cmdline
-			} else {
-				slog.Error("reading cmdline", logger.SlogError(err))
-			}
-		}
-
-		var reasonText string
-		var explaination string
-		reason, foundReason := e.FirewallIPsWithReason.Load(intToIPHostByteOrder(event.Ip).String())
-		if !foundReason {
-			if e.FirewallMethod == models.AllowList {
-				reasonText = "NotInAllowList"
-				explaination = "Domain doesn't match any allowlist prefixes"
-			} else {
-				reasonText = "Unknown"
-			}
-		} else {
-			reasonText = reason.KindHumanReadable()
-			explaination = reason.Comment
-		}
-
-		const (
-			DNS_PROXY_PACKET_BYPASS_TYPE  = 1
-			DNS_REDIRECT_TYPE             = 11
-			LOCALHOST_PACKET_BYPASS_TYPE  = 12
-			HTTP_PROXY_PACKET_BYPASS_TYPE = 2
-			HTTP_REDIRECT_TYPE            = 22
-			PROXY_PID_BYPASS_TYPE         = 23
-		)
-
-		var eventTypeString string
-		switch event.EventType {
-		case DNS_PROXY_PACKET_BYPASS_TYPE:
-			eventTypeString = "dnsProxyPacket"
-		case DNS_REDIRECT_TYPE:
-			eventTypeString = "dnsRedirect"
-		case LOCALHOST_PACKET_BYPASS_TYPE:
-			eventTypeString = "localhostPacket"
-		case HTTP_PROXY_PACKET_BYPASS_TYPE:
-			eventTypeString = "httpProxyPacket"
-		case HTTP_REDIRECT_TYPE:
-			eventTypeString = "httpRedirect"
-		case PROXY_PID_BYPASS_TYPE:
-			eventTypeString = "proxyPid"
-		case 0:
-			eventTypeString = "normalPacket"
-		default:
-			panic("Unknown bypass type")
-		}
-
-		ip := intToIPHostByteOrder(event.Ip)
-
-		ipResolvedForDomains := "None"
-		ipResolvedDomainList, foundDomainsForIp := e.ipDomainTracking.Load(ip.String())
-		if foundDomainsForIp {
-			ipResolvedForDomains = ipResolvedDomainList.String()
-		}
-
-		if !event.Allowed {
-			slog.Warn(
-				"Packet BLOCKED",
-				"blockedAt", "packet",
-				"blocked", !event.Allowed,
-				"ip", ip,
-				"originalIP", intToIPHostByteOrder(event.OriginalIp),
-				"bypassType", eventTypeString,
-				"port", event.Port,
-				"ipResolvedForDomains", ipResolvedForDomains,
-				"pid", event.Pid,
-				"cmd", cmdRun,
-				"reason", reasonText,
-				"explaination", explaination,
-				"firewallMethod", e.FirewallMethod.String(),
-				"redirectedByeBPF", event.HasBeenRedirected,
-			)
-		} else if logger.ShowDebugLogs {
-			slog.Debug(
-				"Packet allowed",
-				"blocked", !event.Allowed,
-				"ip", ip,
-				"originalIP", intToIPHostByteOrder(event.OriginalIp),
-				"bypassType", eventTypeString,
-				"port", event.Port,
-				"ipResolvedForDomains", ipResolvedForDomains,
-				"pid", event.Pid,
-				"cmd", cmdRun,
-				"firewallMethod", e.FirewallMethod.String(),
-				"redirectedByeBPF", event.HasBeenRedirected,
-			)
-		}
-
-		// Store the dns transaction id to correlate the pid and command which made the request
-		if event.EventType == DNS_REDIRECT_TYPE || event.EventType == DNS_PROXY_PACKET_BYPASS_TYPE {
-			if event.DnsTransactionId != 0 {
-				e.dnsTransactionIdToPid.Store(event.DnsTransactionId, event.Pid)
-				e.dnsTransactionIdToCmd.Store(event.DnsTransactionId, cmdRun)
-			}
-		}
-	}
 }

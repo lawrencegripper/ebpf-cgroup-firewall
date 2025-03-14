@@ -13,9 +13,11 @@ assert_exit_code() {
     local expected=$1
     local actual=$exitCode
     if [ "$actual" -ne "$expected" ]; then
-        echo -e "\033[0;31m❌ Expected exit code $expected but got $actual\033[0m"
         echo -e "\033[0;96m⬇️ Command Output:\033[0m" | $indent_once
         echo "$cmdOutput" | $indent_twice
+        echo -e "\033[0;31m❌ Expected exit code $expected but got $actual\033[0m"
+        echo "Failed at:"
+        caller | $indent_twice
         exit 1
     else
         echo -e "\033[0;32m✅ Exit Code $actual == $expected \033[0m" | $indent_once
@@ -27,9 +29,11 @@ assert_output_contains() {
     if [[ "$cmdOutput" == *"$expected"* ]]; then
         echo -e "\033[0;32m✅ Output contains: $expected \033[0m" | $indent_once
     else
-        echo -e "\033[0;31m❌ Expected output to contain: $expected\033[0m"
         echo "Actual output was:"
         echo "$cmdOutput" | $indent_twice
+        echo -e "\033[0;31m❌ Expected output to contain: $expected\033[0m"
+        echo "Failed at:"
+        caller | $indent_twice
         exit 1
     fi
 }

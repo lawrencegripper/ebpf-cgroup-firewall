@@ -8,6 +8,7 @@ import (
 
 	"github.com/elazarl/goproxy"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 )
 
@@ -49,33 +50,41 @@ func (h *BlockingRequestHandler) Handle(req *http.Request, ctx *goproxy.ProxyCtx
 	}
 
 	if h.firewall.FirewallMethod == models.AllowList && !domainMatchedFirewallDomains {
-		slog.Warn("HTTP BLOCKED",
-			"reason", "NotInAllowList",
-			"explaination", "Domain doesn't match any allowlist prefixes",
-			"blocked", true,
-			"blockedAt", "http",
-			"domain", req.Host,
-			"pid", pid,
-			// TODO: Command tracking for http proxy
-			// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
-			"firewallMethod", h.firewall.FirewallMethod.String(),
+		logger.LogRequest(
+			&logger.RequestLog{
+				Because:   logger.NotInAllowListExplanation,
+				Blocked:   true,
+				BlockedAt: logger.HTTPRequestType,
+				Domains:   req.Host,
+				RuleSource: models.RuleSource{
+					Kind:    models.MissingFromAllowList,
+					Comment: "Domain doesn't match any allowlist prefixes",
+				},
+				PID:  pid,
+				Port: req.URL.Port(),
+				URL:  req.URL.String(),
+			},
 		)
 		return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 	}
 
 	if h.firewall.FirewallMethod == models.BlockList && domainMatchedFirewallDomains {
-		explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedDomain)
 
 		// TODO: Add helper method to standardise logging on blocking with DNS proxy
-		slog.Warn("HTTP BLOCKED",
-			"reason", "InBlockList",
-			"explaination", explaination,
-			"blocked", true,
-			"blockedAt", "http",
-			"domain", matchedDomain,
-			"pid", pid,
-			// "cmd", b.dnsFirewall.DnsTransactionIdToCmd[r.Id],
-			"firewallMethod", h.firewall.FirewallMethod.String(),
+		logger.LogRequest(
+			&logger.RequestLog{
+				Because:   logger.InBlockListedExplaination,
+				Blocked:   true,
+				BlockedAt: logger.HTTPRequestType,
+				Domains:   req.Host,
+				RuleSource: models.RuleSource{
+					Kind:    models.PresentOnBlockList,
+					Comment: fmt.Sprintf("Matched Domain Prefix: %s", matchedDomain),
+				},
+				PID:  pid,
+				Port: req.URL.Port(),
+				URL:  req.URL.String(),
+			},
 		)
 		return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 	}
@@ -87,6 +96,7 @@ func (h *BlockingRequestHandler) Handle(req *http.Request, ctx *goproxy.ProxyCtx
 	// Strip the port from the url if it's the default port
 	reqUrl = strings.Replace(reqUrl, ":80", "", 1)
 	reqUrl = strings.Replace(reqUrl, ":443", "", 1)
+
 	for _, firewallUrl := range h.firewallUrls {
 		slog.Debug("Checking url against firewall url", slog.String("url", reqUrl), slog.String("firewallUrl", firewallUrl))
 		if strings.HasPrefix(reqUrl, firewallUrl) {
@@ -97,14 +107,20 @@ func (h *BlockingRequestHandler) Handle(req *http.Request, ctx *goproxy.ProxyCtx
 	}
 
 	if h.firewall.FirewallMethod == models.AllowList && !urlMatchedFirewallUrls {
-		slog.Warn("HTTP BLOCKED",
-			"reason", "NotInAllowList",
-			"explaination", "Url doesn't match any allowlist prefixes",
-			"blocked", true,
-			"blockedAt", "http",
-			"url", reqUrl,
-			"pid", pid,
-			"firewallMethod", h.firewall.FirewallMethod.String(),
+		logger.LogRequest(
+			&logger.RequestLog{
+				Because:   logger.NotInAllowListExplanation,
+				Blocked:   true,
+				BlockedAt: logger.HTTPRequestType,
+				Domains:   req.Host,
+				RuleSource: models.RuleSource{
+					Kind:    models.MissingFromAllowList,
+					Comment: "URL doesn't match any allowlist prefixes",
+				},
+				PID:  pid,
+				Port: req.URL.Port(),
+				URL:  reqUrl,
+			},
 		)
 		return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 	}
@@ -112,19 +128,35 @@ func (h *BlockingRequestHandler) Handle(req *http.Request, ctx *goproxy.ProxyCtx
 	if h.firewall.FirewallMethod == models.BlockList && urlMatchedFirewallUrls {
 		explaination := fmt.Sprintf("Matched URL Prefix: %s", matchedUrl)
 
-		slog.Warn("HTTP BLOCKED",
-			"reason", "InBlockList",
-			"explaination", explaination,
-			"blocked", true,
-			"blockedAt", "http",
-			"url", matchedUrl,
-			"pid", pid,
-			"firewallMethod", h.firewall.FirewallMethod.String(),
+		logger.LogRequest(
+			&logger.RequestLog{
+				Because:   logger.InBlockListedExplaination,
+				Blocked:   true,
+				BlockedAt: logger.HTTPRequestType,
+				Domains:   req.Host,
+				RuleSource: models.RuleSource{
+					Kind:    models.PresentOnBlockList,
+					Comment: explaination,
+				},
+				PID:  pid,
+				Port: req.URL.Port(),
+				URL:  reqUrl,
+			},
 		)
 		return nil, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Blocked by DNS monitoring proxy")
 	}
 
-	slog.Debug("HTTP request allowed", slog.String("url", req.URL.String()), slog.String("host", req.Host))
+	logger.LogRequest(
+		&logger.RequestLog{
+			Because:   logger.AllowedExplaination,
+			Blocked:   false,
+			BlockedAt: logger.HTTPRequestType,
+			Domains:   req.Host,
+			PID:       pid,
+			Port:      req.URL.Port(),
+			URL:       req.URL.String(),
+		},
+	)
 
 	return req, nil
 }
