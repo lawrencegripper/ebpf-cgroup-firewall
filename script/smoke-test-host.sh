@@ -10,13 +10,13 @@ source "$(dirname "$0")/helpers.sh"
 open_fold "Docker Attach block list: Curl google when blocked"
     attach_container_firewall_test "--block-list google.com" "curl $default_curl_args google.com"
     assert_exit_code 6
-    assert_output_contains "Matched Domain Prefix: google.com"
+    assert_output_contains "Domain matched blocklist prefix: google.com"
 close_fold
 
 open_fold "Docker Attach block list: Curl google when blocked (Allow DNS)"
     attach_container_firewall_test "--allow-dns-request --block-list google.com" "curl $default_curl_args google.com"
     assert_exit_code 28
-    assert_output_contains "Packet BLOCKED"
+    assert_output_contains '"msg":"BLOCKED","because":"IPNotAllowed","blocked":true,"blockedAt":"packet"'
 close_fold
 
 open_fold "Docker Attach block list: Curl bing when google blocked"
