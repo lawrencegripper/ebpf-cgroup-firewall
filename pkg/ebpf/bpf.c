@@ -23,7 +23,7 @@ struct event {
   bool allowed;
   __u32 ip;
   __u32 originalIp;
-  __u16 eventType;
+  __u8 eventType;
   __u16 dnsTransactionId;
   bool pidResolved;
   bool hasBeenRedirected;

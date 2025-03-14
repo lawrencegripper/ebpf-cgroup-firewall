@@ -35,8 +35,8 @@ func StartDNSMonitoringProxy(listenPort int, domains []string, firewall ebpf.Dns
 	downstreamServerAddr := config.Servers[0] + ":" + config.Port
 	slog.Debug("Using downstream DNS resolver", "address", downstreamServerAddr)
 	if firewall.GetFirewallMethod() == models.AllowList {
-		err := firewall.AllowIPThroughFirewall(config.Servers[0], &ebpf.Reason{
-			Kind:    ebpf.FromDnsRequest,
+		err := firewall.AllowIPThroughFirewall(config.Servers[0], &models.RuleSource{
+			Kind:    models.AllowUpstreamDNSServer,
 			Comment: "when configured as allow list ensure we can call downstream dns server",
 		})
 		if err != nil {
@@ -116,7 +116,7 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	m.Compress = false
 	m.Authoritative = true
 
-	pid, cmd, err := b.dnsFirewall.GetPidAndCommandFromDNSTransactionId(r.Id)
+	pid, err := b.dnsFirewall.GetPidFromDNSTransactionId(r.Id)
 	if err != nil {
 		slog.Error("Failed to get PID and command from DNS transaction ID", logger.SlogError(err))
 	}
@@ -155,16 +155,24 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
 
-				slog.Warn("DNS BLOCKED",
-					"reason", "NotInAllowList",
-					"explaination", "Domain doesn't match any allowlist prefixes",
-					"blocked", true,
-					"blockedAt", "dns",
-					"domain", q.Name,
-					"pid", pid,
-					"cmd", cmd,
-					"firewallMethod", b.dnsFirewall.GetFirewallMethod().String(),
+				ruleSource := models.RuleSource{
+					Kind:    models.MissingFromAllowList,
+					Comment: "Domain doesn't match any allowlist prefixes",
+				}
+
+				logger.LogRequest(
+					&logger.RequestLog{
+						Because:    logger.NotInAllowListExplanation,
+						Blocked:    true,
+						BlockedAt:  logger.DNSRequestType,
+						Domains:    q.Name,
+						RuleSource: ruleSource,
+						PID:        int(pid),
+						OriginalIP: logger.UnknownValue,
+						Port:       "53",
+					},
 				)
+
 				return
 			}
 		}
@@ -178,17 +186,23 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					slog.Error("Failed to write DNS response", logger.SlogError(err))
 				}
 
-				explaination := fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause)
+				ruleSource := models.RuleSource{
+					Kind:    models.PresentOnBlockList,
+					Comment: fmt.Sprintf("Domain matched blocklist prefix: %s", matchedBecause),
+				}
 
-				slog.Warn("DNS BLOCKED",
-					"reason", "InBlockList",
-					"explaination", explaination,
-					"blocked", true,
-					"blockedAt", "dns",
-					"domain", q.Name,
-					"pid", pid,
-					"cmd", cmd,
-					"firewallMethod", b.dnsFirewall.GetFirewallMethod().String())
+				logger.LogRequest(
+					&logger.RequestLog{
+						Because:    logger.NotInAllowListExplanation,
+						Blocked:    true,
+						BlockedAt:  logger.DNSRequestType,
+						Domains:    q.Name,
+						RuleSource: ruleSource,
+						PID:        int(pid),
+						OriginalIP: logger.UnknownValue,
+						Port:       "53",
+					},
+				)
 				return
 			}
 		}
@@ -226,8 +240,8 @@ func (b *blockingDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					if a, ok := answer.(*dns.A); ok {
 						err = b.dnsFirewall.AllowIPThroughFirewall(
 							a.A.String(),
-							&ebpf.Reason{
-								Kind:    ebpf.FromDnsRequest,
+							&models.RuleSource{
+								Kind:    models.AllowIPAddedByDNS,
 								Comment: fmt.Sprintf("Matched Domain Prefix: %s", matchedBecause),
 							},
 						)

@@ -41,3 +41,39 @@ func IntToIP(val uint32) net.IP {
 func IntToPort(val uint16) uint16 {
 	return binary.BigEndian.Uint16([]byte{byte(val >> 8), byte(val & 0xff)})
 }
+
+type RuleKind int
+
+const (
+	AllowUserSpecifiedIP RuleKind = iota
+	AllowIPAddedByDNS
+	AllowUpstreamDNSServer
+	MissingFromAllowList
+	PresentOnBlockList
+	Allowed
+	Unknown
+)
+
+type RuleSource struct {
+	Kind    RuleKind
+	Comment string
+}
+
+func (r *RuleSource) KindHumanReadable() string {
+	switch r.Kind {
+	case AllowUserSpecifiedIP:
+		return "UserSpecifiedIP"
+	case AllowIPAddedByDNS:
+		return "FromDNSRequest"
+	case AllowUpstreamDNSServer:
+		return "FromUpstreamDNSServer"
+	case MissingFromAllowList:
+		return "NotInAllowList"
+	case PresentOnBlockList:
+		return "MatchedBlockListDomain"
+	case Unknown:
+		return "Unknown"
+	default:
+		return "ReallyUnknown"
+	}
+}
