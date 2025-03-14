@@ -16,6 +16,7 @@ import (
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/dns"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/ebpf"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/logger"
+	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 )
 
 // Load the mkcert root CA certificate and key
@@ -66,7 +67,7 @@ type ProxyServer struct {
 }
 
 // Start starts both HTTP and HTTPS proxies and returns the ports they're listening on
-func Start(httpPort, httpsPort int, firewall *ebpf.EgressFirewall, dnsProxy *dns.DNSProxy, firewallDomains []string, firewallUrls []string) (*ProxyServer, error) {
+func Start(httpPort, httpsPort int, firewall *ebpf.EgressFirewall, dnsProxy *dns.DNSProxy, firewallItems models.FirewallItems) (*ProxyServer, error) {
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = logger.ShowDebugLogs
 	if proxy.Verbose {
@@ -90,7 +91,7 @@ func Start(httpPort, httpsPort int, firewall *ebpf.EgressFirewall, dnsProxy *dns
 	proxy.OnRequest().HandleConnect(customAlwaysMitm)
 
 	// Blocking logic in the proxy
-	proxy.OnRequest().Do(NewBlockingRequestHandler(firewall, firewallDomains, firewallUrls))
+	proxy.OnRequest().Do(NewBlockingRequestHandler(firewall, firewallItems))
 
 	// Handle http requests sent to the proxy
 	httpTranparentHander := NewHttpTransparentHandler(httpPort, firewall, proxy)

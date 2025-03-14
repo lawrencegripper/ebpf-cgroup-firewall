@@ -117,8 +117,27 @@ struct {
   __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } src_port_to_sock_client SEC(".maps");
 
-// Map for allowed IP addresses from userspace. This is populated with the
-// responses to dns queries
+// Map for tracking socket cookie to pid mapping
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __type(key, __u64);
+  __type(value, __u32);
+  __uint(max_entries, 10000);
+} socket_pid_map SEC(".maps");
+
+// Map for IPs only allowed for HTTP/HTTPS requests
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __type(key, __u32);
+  __type(value, __u32);
+  __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
+  // This is a guess at the number of unique IPs we might see while this eBPF is
+  // loaded
+  // TODO: Look at clearing out old ips from the list or handling it's size some
+  // other way
+} firewall_allowed_http_ips_map SEC(".maps");
+
+// Map for IPs only allowed for any requests
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __type(key, __u32);
@@ -129,14 +148,6 @@ struct {
   // TODO: Look at clearing out old ips from the list or handling it's size some
   // other way
 } firewall_allowed_ips_map SEC(".maps");
-
-// Map for tracking socket cookie to pid mapping
-struct {
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __type(key, __u64);
-  __type(value, __u32);
-  __uint(max_entries, 10000);
-} socket_pid_map SEC(".maps");
 
 // eBPF Programs
 
@@ -272,6 +283,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
   __u32 destination_ip = iph.daddr;
   __u32 *original_ip_ptr =
       bpf_map_lookup_elem(&sock_client_to_original_ip, &socketCookie);
+
   if (original_ip_ptr) {
     // We did a redirect, so for the purposes of the firewall check we'll
     // consider the original ip that was being targetted
@@ -361,8 +373,14 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
 
   // Setup default action based on firewall mode
   bool destination_allowed = false;
+  
+  // Is the ip allowed for any ports?
   bool ip_present_in_firewall_list =
       bpf_map_lookup_elem(&firewall_allowed_ips_map, &original_ip);
+
+  // Is the ip allowed for http/https ports?
+  bool ip_present_in_http_firewall_list =
+      bpf_map_lookup_elem(&firewall_allowed_http_ips_map, &original_ip);
 
   // Only destinations added to the firewall are allowed (or we're in log only
   // mode)
@@ -370,28 +388,37 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
     destination_allowed = true;
   }
 
+  bool is_http_proxy_port = (
+    port == bpf_htons(const_http_proxy_port) ||
+    port == bpf_htons(const_https_proxy_port)
+  );
+
+  bool is_redirected_to_http_proxy = (
+    iph.daddr == const_mitm_proxy_address && is_http_proxy_port
+  );
+
+  if (is_redirected_to_http_proxy && ip_present_in_http_firewall_list) {
+    destination_allowed = true;
+  }
+
   // Only allow the http request through to the http proxy if the destination of
   // the packet is allowed. This gives us defense in depth. DNS must add allowed
   // IP, Packet validates it's allowed then it gets through to the http proxy
   // which can validate the url
-  if (destination_allowed) {
-    if (iph.daddr == const_mitm_proxy_address &&
-        (port == bpf_htons(const_http_proxy_port) ||
-         port == bpf_htons(const_https_proxy_port))) {
-      struct event info = {
-          .port = bpf_ntohs(port),
-          .allowed = true,
-          .ip = bpf_ntohl(iph.daddr),
-          .pid = pid ? *pid : 0,
-          .pidResolved = pid ? true : false,
-          .originalIp = bpf_ntohl(original_ip),
-          .hasBeenRedirected = isRedirectedByToOurProxy,
-          .eventType = HTTP_PROXY_PACKET_BYPASS_TYPE,
-      };
+  if (destination_allowed && is_redirected_to_http_proxy) {
+    struct event info = {
+        .port = bpf_ntohs(port),
+        .allowed = true,
+        .ip = bpf_ntohl(iph.daddr),
+        .pid = pid ? *pid : 0,
+        .pidResolved = pid ? true : false,
+        .originalIp = bpf_ntohl(original_ip),
+        .hasBeenRedirected = isRedirectedByToOurProxy,
+        .eventType = HTTP_PROXY_PACKET_BYPASS_TYPE,
+    };
 
-      bpf_ringbuf_output(&events, &info, sizeof(info), 0);
-      return EGRESS_ALLOW_PACKET;
-    }
+    bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+    return EGRESS_ALLOW_PACKET;
   }
 
   struct event info = {

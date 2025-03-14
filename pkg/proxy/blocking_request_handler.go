@@ -13,16 +13,14 @@ import (
 )
 
 type BlockingRequestHandler struct {
-	firewall        *ebpf.EgressFirewall
-	firewallDomains []string
-	firewallUrls    []string
+	firewall      *ebpf.EgressFirewall
+	firewallItems models.FirewallItems
 }
 
-func NewBlockingRequestHandler(firewall *ebpf.EgressFirewall, firewallDomains []string, firewallUrls []string) *BlockingRequestHandler {
+func NewBlockingRequestHandler(firewall *ebpf.EgressFirewall, firewallitems models.FirewallItems) *BlockingRequestHandler {
 	return &BlockingRequestHandler{
-		firewall:        firewall,
-		firewallDomains: firewallDomains,
-		firewallUrls:    firewallUrls,
+		firewall:      firewall,
+		firewallItems: firewallitems,
 	}
 }
 
@@ -42,7 +40,8 @@ func (h *BlockingRequestHandler) Handle(req *http.Request, ctx *goproxy.ProxyCtx
 
 	domainMatchedFirewallDomains := false
 	matchedDomain := ""
-	for _, domain := range h.firewallDomains {
+	fullAllowedDomains := append(h.firewallItems.Domains, h.firewallItems.HttpDomains...)
+	for _, domain := range fullAllowedDomains {
 		if strings.HasSuffix(req.Host, domain) {
 			domainMatchedFirewallDomains = true
 			matchedDomain = domain
@@ -97,7 +96,7 @@ func (h *BlockingRequestHandler) Handle(req *http.Request, ctx *goproxy.ProxyCtx
 	reqUrl = strings.Replace(reqUrl, ":80", "", 1)
 	reqUrl = strings.Replace(reqUrl, ":443", "", 1)
 
-	for _, firewallUrl := range h.firewallUrls {
+	for _, firewallUrl := range h.firewallItems.URLs {
 		slog.Debug("Checking url against firewall url", slog.String("url", reqUrl), slog.String("firewallUrl", firewallUrl))
 		if strings.HasPrefix(reqUrl, firewallUrl) {
 			urlMatchedFirewallUrls = true
