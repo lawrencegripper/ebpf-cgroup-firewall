@@ -62,7 +62,7 @@ type RuleSource struct {
 func (r *RuleSource) KindHumanReadable() string {
 	switch r.Kind {
 	case AllowUserSpecifiedIP:
-		return "UserUserSpecifiedIP"
+		return "UserSpecifiedIP"
 	case AllowIPAddedByDNS:
 		return "FromDNSRequest"
 	case AllowUpstreamDNSServer:
