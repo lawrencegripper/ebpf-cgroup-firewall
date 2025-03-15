@@ -1,0 +1,79 @@
+
+name: Real world
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  no-firewall:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        run-number: [1, 2, 3, 4, 5]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run `real-world.sh` without firewall
+      run: ./script/real-world.sh
+      
+    - name: Upload firewall logs as artifacts
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: stopwatch-${{ matrix.run-number }}
+        path: /tmp/stopwatch.log
+        retention-days: 5
+
+  with-firewall:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        run-number: [1, 2, 3, 4, 5]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build
+      run: |
+        sudo ./script/linux-dependencies
+        make build
+    
+    - name: Install mkcert
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libnss3-tools
+        curl -JLO "https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64"
+        sudo chmod +x mkcert-v*-linux-amd64
+        sudo mv mkcert-v*-linux-amd64 /usr/local/bin/mkcert
+        sudo mkcert -install
+
+    - name: Run `real-world.sh` with firewall
+      run: sudo ./bin/ebpf-cgroup-firewall run --log-file /tmp/ebpf-cgroup-firewall.log ./script/real-world.sh
+
+    - name: get stopwatch data
+      run: cat /tmp/stopwatch.log
+
+    - name: Upload firewall logs as artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: firewall-logs-${{ matrix.run-number }}
+        path: /tmp/ebpf-cgroup-firewall.log
+        retention-days: 5
+    
+    - name: Upload firewall logs as artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: stopwatch-${{ matrix.run-number }}
+        path: /tmp/stopwatch.log
+        retention-days: 5
+

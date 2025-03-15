@@ -40,12 +40,14 @@ assert_output_contains() {
 
 open_fold() {
     echo ""
-    local title="$1"
+    title="$1"
+    start_time=$(date +%s)
     if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
         echo "::group::$title"
     else
         echo -e "\033[0;34m▼ $title\033[0m"
     fi
+    touch /tmp/stopwatch.log
 }
 
 close_fold() {
@@ -54,6 +56,9 @@ close_fold() {
     else
         echo -e "\033[0;34m▲ End\033[0m"
     fi
+    local elapsed=$(($(date +%s) - start_time))
+    echo "⏱️ $elapsed seconds"
+    echo "$title: ${elapsed}s" >> /tmp/stopwatch.log
 }
 
 run_firewall_test() {
