@@ -7,6 +7,11 @@ ps aux | grep './bin/ebpf-cgroup-firewall' | grep -v grep | awk '{print $2}' | x
 
 source "$(dirname "$0")/helpers.sh"
 
+open_fold "IPv6: Block IPv6 Traffic as not supported in the proxy currently"
+    run_firewall_test "--debug --allow-list ifconfig.co" "curl -6 $default_curl_args https://ifconfig.co"
+    assert_exit_code 7 # Validate that curl can't resolve a ipv6 address for the domain
+close_fold
+
 open_fold "Odd: allow github url expect port 22 to remain blocked"
     run_firewall_test "--debug --allow-dns-request --allow-list https://github.com" "nc -zv -w 1 github.com 22"
     assert_exit_code 1

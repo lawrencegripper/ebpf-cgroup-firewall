@@ -33,6 +33,7 @@ const (
 	NotInAllowListExplanation RequestExplanation = "NotInAllowList"
 	InBlockListedExplaination RequestExplanation = "MatchedBlockListDomain"
 	PacketIPNotInAllowList    RequestExplanation = "IPNotAllowed"
+	PacketIPv6Blocked         RequestExplanation = "IPv6AlwaysBlocked"
 	AllowedExplaination       RequestExplanation = "Allowed"
 )
 

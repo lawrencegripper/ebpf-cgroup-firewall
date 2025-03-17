@@ -7,6 +7,8 @@ ps aux | grep './bin/ebpf-cgroup-firewall' | grep -v grep | awk '{print $2}' | x
 
 source "$(dirname "$0")/helpers.sh"
 
+# Why on host only?
+# Docker in docker complicates attach tests
 open_fold "Docker Attach block list: Curl google when blocked"
     attach_container_firewall_test "--block-list google.com" "curl $default_curl_args google.com"
     assert_exit_code 6

@@ -15,12 +15,14 @@ import (
 )
 
 const (
+	// These ints are defined in ./ebpf/bpf.c line 34-40
 	DNS_PROXY_PACKET_BYPASS_TYPE  EventType = 1
 	DNS_REDIRECT_TYPE             EventType = 11
 	LOCALHOST_PACKET_BYPASS_TYPE  EventType = 12
 	HTTP_PROXY_PACKET_BYPASS_TYPE EventType = 2
 	HTTP_REDIRECT_TYPE            EventType = 22
 	PROXY_PID_BYPASS_TYPE         EventType = 23
+	PACKET_IPV6_TYPE              EventType = 24
 	NORMAL_PACKET_TYPE            EventType = 0
 )
 
@@ -46,6 +48,8 @@ func (e EventType) HumanReadable() string {
 		return "HTTP Redirect"
 	case PROXY_PID_BYPASS_TYPE:
 		return "Proxy PID Bypass"
+	case PACKET_IPV6_TYPE:
+		return "IPv6 Packet"
 	case NORMAL_PACKET_TYPE:
 		return "Normal Packet"
 	default:
@@ -89,9 +93,9 @@ func (e *EgressFirewall) monitorRingBufferEventfunc() {
 
 		eventType := EventType(event.EventType)
 
-		if eventType == NORMAL_PACKET_TYPE {
+		if eventType == NORMAL_PACKET_TYPE || eventType == PACKET_IPV6_TYPE {
 			// These are blocked and allowed packets
-			logPacket(e, ip, event, ruleSource, originalIp)
+			logPacket(eventType, e, ip, event, ruleSource, originalIp)
 		} else {
 			// These are special events where we've done something, like redirecting a DNS request to localhost
 			// or bypassing the proxy for a DNS request
@@ -110,6 +114,7 @@ func logRedirectOrBypass(eventType EventType, ip net.IP, event bpfEvent, e *Egre
 		slog.Int("port", int(event.Port)),
 		slog.Int("pid", int(event.Pid)),
 		slog.String("cmd", logger.CmdLineFromPid(int(event.Pid))),
+		slog.Bool("allowed", event.Allowed),
 	}
 
 	// Store the dns transaction id to correlate the pid and command which made the request
@@ -124,7 +129,7 @@ func logRedirectOrBypass(eventType EventType, ip net.IP, event bpfEvent, e *Egre
 	slog.Info(eventType.HumanReadable(), sharedAttrs...)
 }
 
-func logPacket(e *EgressFirewall, ip net.IP, event bpfEvent, ruleSource *models.RuleSource, originalIp net.IP) {
+func logPacket(eventType EventType, e *EgressFirewall, ip net.IP, event bpfEvent, ruleSource *models.RuleSource, originalIp net.IP) {
 	ipResolvedForDomains := "None"
 	ipResolvedDomainList, foundDomainsForIp := e.ipDomainTracking.Load(ip.String())
 	if foundDomainsForIp {
@@ -134,6 +139,11 @@ func logPacket(e *EgressFirewall, ip net.IP, event bpfEvent, ruleSource *models.
 	because := logger.AllowedExplaination
 	if !event.Allowed {
 		because = logger.PacketIPNotInAllowList
+	}
+
+	// IPv6 packets are always blocked atm
+	if !event.Allowed && eventType == PACKET_IPV6_TYPE {
+		because = logger.PacketIPv6Blocked
 	}
 
 	logger.LogRequest(
