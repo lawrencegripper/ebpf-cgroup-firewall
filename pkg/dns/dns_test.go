@@ -18,16 +18,16 @@ import (
 func mockedBlockingFirewall(t *testing.T) *ebpf.MockDnsFirewall {
 	blockingFirewall := ebpf.NewMockDnsFirewall(t)
 	blockingFirewall.On("GetFirewallMethod").Return(models.BlockList).Maybe()
-	blockingFirewall.On("AllowIPThroughFirewall", mock.Anything, mock.Anything).Return(nil).Maybe()
+	blockingFirewall.On("AllowIPThroughFirewall", mock.AnythingOfType("string"), mock.AnythingOfType("AddIPType"), mock.Anything).Return(nil).Maybe()
 	blockingFirewall.On("TrackIPToDomain", mock.Anything, mock.Anything).Maybe()
-	blockingFirewall.On("GetPidFromDNSTransactionId", mock.Anything).Return(uint32(0), nil).Maybe()
+	blockingFirewall.On("GetPidFromDNSTransactionId", mock.Anything).Return(int32(0), nil).Maybe()
 	return blockingFirewall
 }
 
 func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 	blockingFirewall := mockedBlockingFirewall(t)
 
-	domainsToBlock := []string{"bing.com"}
+	domainsToBlock := models.FirewallItems{Domains: []string{"bing.com"}}
 
 	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, blockingFirewall, false)
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestCreateDNSProxyForCgroup_ResolvesDomains(t *testing.T) {
 
 func TestDNSProxy_BlocksDomains(t *testing.T) {
 	blockingFirewall := mockedBlockingFirewall(t)
-	domainsToBlock := []string{"example.com"}
+	domainsToBlock := models.FirewallItems{Domains: []string{"example.com"}}
 
 	proxy, err := StartDNSMonitoringProxy(55555, domainsToBlock, blockingFirewall, false)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestDNSProxy_BlocksDomains(t *testing.T) {
 }
 
 func TestDNSProxy_Shutdown(t *testing.T) {
-	domainsToBlock := []string{"example.com"}
+	domainsToBlock := models.FirewallItems{Domains: []string{"bing.com"}}
 
 	blockingFirewall := mockedBlockingFirewall(t)
 
@@ -99,7 +99,7 @@ func TestFindUnusedPort(t *testing.T) {
 }
 
 func TestDNSProxy_RefusesIPv6Requests(t *testing.T) {
-	domainsToBlock := []string{"example.com"}
+	domainsToBlock := models.FirewallItems{Domains: []string{"bing.com"}}
 
 	blockingFirewall := mockedBlockingFirewall(t)
 

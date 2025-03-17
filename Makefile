@@ -4,9 +4,8 @@ help: ## Display this help.
 
 .PHONY: generate
 generate: ## Generate eBPF code using 'go generate' see https://ebpf-go.dev/guides/getting-started/#compile-ebpf-c-and-generate-scaffolding-using-bpf2go
-	@if [ "$(shell uname)" = "Linux" ]; then \
-		go generate ./... ; \
-	fi
+	mockery --log-level=error
+	go generate ./...
 
 .PHONY: check-generate
 check-generate: generate ## Check if generate target causes any changes.
@@ -23,8 +22,7 @@ build: generate ## Build the tool
 	go build -v -o bin/ebpf-cgroup-firewall ./cmd/main.go
 
 .PHONY: test
-test: ## Run the tests
-	mockery --log-level=error
+test: generate ## Run the tests
 	go test -race -v ./...
 
 .PHONY: lint
@@ -45,7 +43,7 @@ soaktest: build ## Run the soak test suite (15min duration)
 	./script/soak-test.sh
 
 .PHONY: ci
-ci: lint test generate smoketest ## Run CI (lint, generate, test, smoketest)
+ci: generate lint test smoketest ## Run CI (lint, generate, test, smoketest)
 
 .PHONY: release
 release: ## Create a release

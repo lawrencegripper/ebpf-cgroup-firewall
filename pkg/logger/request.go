@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/models"
 	"github.com/lawrencegripper/actions-dns-monitoring/pkg/utils"
@@ -46,6 +47,10 @@ func CmdLineFromPid(pid int) string {
 
 	if pid == -1 {
 		return "unknown, pid is -1"
+	}
+
+	if pid == 0 {
+		return "root process (pid 0)"
 	}
 
 	// Lookup the processPath for the event
@@ -92,9 +97,11 @@ func LogRequest(r *RequestLog) {
 		slog.String("cmd", CmdLineFromPid(r.PID)),
 	}
 
+	msg := fmt.Sprintf("%s BLOCKED", strings.ToUpper(r.BlockedAt.String()))
+
 	if r.Blocked {
-		slog.Warn("BLOCKED", content...)
+		slog.Warn(msg, content...)
 	} else {
-		slog.Info("ALLOWED", content...)
+		slog.Info(msg, content...)
 	}
 }

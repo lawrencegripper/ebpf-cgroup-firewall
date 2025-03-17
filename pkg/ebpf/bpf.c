@@ -18,15 +18,15 @@
 // This event is sent via the ring buffer to userspace to log the actions of the
 // firewall
 struct event {
-  __u32 pid;
+  __s32 pid;
   __u16 port;
   bool allowed;
   __u32 ip;
-  __u32 originalIp;
+  __u32 original_ip;
   __u8 eventType;
-  __u16 dnsTransactionId;
-  bool pidResolved;
-  bool hasBeenRedirected;
+  __u16 dns_transaction_id;
+  bool pid_resolved;
+  bool has_been_redirected;
 };
 struct event *unused __attribute__((unused));
 
@@ -117,8 +117,27 @@ struct {
   __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
 } src_port_to_sock_client SEC(".maps");
 
-// Map for allowed IP addresses from userspace. This is populated with the
-// responses to dns queries
+// Map for tracking socket cookie to pid mapping
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __type(key, __u64);
+  __type(value, __u32);
+  __uint(max_entries, 10000);
+} socket_pid_map SEC(".maps");
+
+// Map for IPs only allowed for HTTP/HTTPS requests
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __type(key, __u32);
+  __type(value, __u32);
+  __uint(max_entries, 256 * 1024); // Roughly 256k entries. Using ~2MB of memory
+  // This is a guess at the number of unique IPs we might see while this eBPF is
+  // loaded
+  // TODO: Look at clearing out old ips from the list or handling it's size some
+  // other way
+} firewall_allowed_http_ips_map SEC(".maps");
+
+// Map for IPs only allowed for any requests
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
   __type(key, __u32);
@@ -130,26 +149,19 @@ struct {
   // other way
 } firewall_allowed_ips_map SEC(".maps");
 
-// Map for tracking socket cookie to pid mapping
-struct {
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __type(key, __u64);
-  __type(value, __u32);
-  __uint(max_entries, 10000);
-} socket_pid_map SEC(".maps");
-
 // eBPF Programs
 
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx) {
-  __u64 socketCookie = bpf_get_socket_cookie(ctx);
+  __u64 socket_cookie = bpf_get_socket_cookie(ctx);
   __u32 pid = bpf_get_current_pid_tgid() >> 32;
-  bpf_map_update_elem(&socket_pid_map, &socketCookie, &pid, BPF_ANY);
+  bpf_map_update_elem(&socket_pid_map, &socket_cookie, &pid, BPF_ANY);
 
-  bool didRedirect = false;
+  bool did_redirect = false;
 
-  bool isFromProxyPid = (bpf_get_current_pid_tgid() >> 32) == const_proxy_pid;
-  if (isFromProxyPid) {
+  bool is_from_proxy_pid =
+      (bpf_get_current_pid_tgid() >> 32) == const_proxy_pid;
+  if (is_from_proxy_pid) {
     // Allow the ebpf-firewall process out with no redirects
     return 1;
   }
@@ -161,10 +173,10 @@ int connect4(struct bpf_sock_addr *ctx) {
 
   // TODO: This shoul detect if the packet shape is HTTPish rather than relying
   // on ports
-  bool isHttpOrHttpsPort =
+  bool is_http_or_https_port =
       ctx->user_port == bpf_htons(80) || ctx->user_port == bpf_htons(443);
-  if (isHttpOrHttpsPort) {
-    didRedirect = true;
+  if (is_http_or_https_port) {
+    did_redirect = true;
 
     /* This is the hexadecimal representation of 127.0.0.1 address */
     ctx->user_ip4 = const_mitm_proxy_address;
@@ -181,20 +193,20 @@ int connect4(struct bpf_sock_addr *ctx) {
 
     struct event info = {
         .pid = pid,
-        .pidResolved = true,
+        .pid_resolved = true,
         .port = bpf_ntohs(ctx->user_port),
         .allowed = true,
         .ip = bpf_ntohl(ctx->user_ip4),
-        .originalIp = original_ip,
+        .original_ip = original_ip,
         .eventType = HTTP_REDIRECT_TYPE,
-        .hasBeenRedirected = true,
+        .has_been_redirected = true,
     };
 
     bpf_ringbuf_output(&events, &info, sizeof(info), 0);
   } else if (ctx->user_port == bpf_htons(53)) {
     /* For DNS Query (*:53) rewire service to backend
      * 127.0.0.1:const_dns_proxy_port */
-    didRedirect = true;
+    did_redirect = true;
 
     /* This is the hexadecimal representation of 127.0.0.1 address */
     ctx->user_ip4 = const_mitm_proxy_address;
@@ -202,23 +214,23 @@ int connect4(struct bpf_sock_addr *ctx) {
 
     struct event info = {
         .pid = pid,
-        .pidResolved = true,
+        .pid_resolved = true,
         .port = bpf_ntohs(ctx->user_port),
         .allowed = true,
         .ip = bpf_ntohl(ctx->user_ip4),
-        .originalIp = original_ip,
+        .original_ip = original_ip,
         .eventType = DNS_REDIRECT_TYPE,
-        .hasBeenRedirected = true,
+        .has_been_redirected = true,
     };
 
     bpf_ringbuf_output(&events, &info, sizeof(info), 0);
   }
 
-  if (didRedirect) {
+  if (did_redirect) {
     /* Store the original destination of the request */
-    bpf_map_update_elem(&sock_client_to_original_ip, &socketCookie,
+    bpf_map_update_elem(&sock_client_to_original_ip, &socket_cookie,
                         &original_ip, BPF_ANY);
-    bpf_map_update_elem(&sock_client_to_original_port, &socketCookie,
+    bpf_map_update_elem(&sock_client_to_original_port, &socket_cookie,
                         &original_port, BPF_ANY);
   }
 
@@ -250,18 +262,20 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
   // Load packet header
   bpf_skb_load_bytes(skb, 0, &iph, sizeof(struct iphdr));
   // Use the socket cookie to lookup the calling PID
-  __u64 socketCookie = bpf_get_socket_cookie(skb);
-  __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socketCookie);
+  __u64 socket_cookie = bpf_get_socket_cookie(skb);
+  __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socket_cookie);
+  // Use -1 to signal that the pid wasn't found
+  __u32 pid_or_default = pid ? *pid : -1;
 
-  bool isFromProxyPid = (pid ? *pid : -1) == const_proxy_pid;
-  if (isFromProxyPid) {
+  bool is_from_proxy_pid = pid_or_default == const_proxy_pid;
+  if (is_from_proxy_pid) {
     // Allow the ebpf-firewall process to have full outbound access
     struct event info = {
         .port = -1,
         .allowed = true,
         .ip = bpf_ntohl(iph.daddr),
-        .pid = pid ? *pid : 0,
-        .pidResolved = pid ? true : false,
+        .pid = pid_or_default,
+        .pid_resolved = pid ? true : false,
         .eventType = PROXY_PID_BYPASS_TYPE,
     };
 
@@ -271,7 +285,8 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
 
   __u32 destination_ip = iph.daddr;
   __u32 *original_ip_ptr =
-      bpf_map_lookup_elem(&sock_client_to_original_ip, &socketCookie);
+      bpf_map_lookup_elem(&sock_client_to_original_ip, &socket_cookie);
+
   if (original_ip_ptr) {
     // We did a redirect, so for the purposes of the firewall check we'll
     // consider the original ip that was being targetted
@@ -281,7 +296,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
   // If the request was redirected consider the original ip as the destination
   // if it wasn't redirected then consider the destination ip as the destination
   __u32 original_ip = original_ip_ptr ? *original_ip_ptr : destination_ip;
-  bool isRedirectedByToOurProxy = false;
+  bool is_redirected_by_us = original_ip != iph.daddr;
 
   // Allow traffic if original address was to localhost
   if (original_ip == const_mitm_proxy_address) {
@@ -289,10 +304,10 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
         .port = -1,
         .allowed = true,
         .ip = bpf_ntohl(iph.daddr),
-        .originalIp = bpf_ntohl(original_ip),
-        .pid = pid ? *pid : 0,
-        .pidResolved = pid ? true : false,
-        .hasBeenRedirected = isRedirectedByToOurProxy,
+        .original_ip = bpf_ntohl(original_ip),
+        .pid = pid_or_default,
+        .pid_resolved = pid ? true : false,
+        .has_been_redirected = is_redirected_by_us,
         .eventType = LOCALHOST_PACKET_BYPASS_TYPE,
     };
 
@@ -320,24 +335,24 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
 
     // return EGRESS_ALLOW_PACKET;
 
-    bool isProxiedDnsRequest =
+    bool is_proxied_dns_request =
         udp.uh_dport == bpf_htons(const_dns_proxy_port) &&
         iph.daddr == const_mitm_proxy_address;
-    if (isProxiedDnsRequest) {
-      __u16 skbReadOffset = sizeof(struct iphdr) + sizeof(struct udphdr);
-      __u16 dnsTransactionId =
-          getTransactionIdFromDnsHeader(skb, skbReadOffset);
+    if (is_proxied_dns_request) {
+      __u16 skb_read_offset = sizeof(struct iphdr) + sizeof(struct udphdr);
+      __u16 dns_transaction_id =
+          get_transaction_id_from_dns_header(skb, skb_read_offset);
 
       struct event info = {
           .port = bpf_ntohs(udp.uh_dport),
           .allowed = true,
           .ip = bpf_ntohl(iph.daddr),
           .pid = pid ? *pid : 0,
-          .pidResolved = pid ? true : false,
-          .originalIp = bpf_ntohl(original_ip),
-          .hasBeenRedirected = isRedirectedByToOurProxy,
+          .pid_resolved = pid ? true : false,
+          .original_ip = bpf_ntohl(original_ip),
+          .has_been_redirected = is_redirected_by_us,
           .eventType = DNS_PROXY_PACKET_BYPASS_TYPE,
-          .dnsTransactionId = dnsTransactionId,
+          .dns_transaction_id = dns_transaction_id,
       };
 
       bpf_ringbuf_output(&events, &info, sizeof(info), 0);
@@ -361,8 +376,14 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
 
   // Setup default action based on firewall mode
   bool destination_allowed = false;
+
+  // Is the ip allowed for any ports?
   bool ip_present_in_firewall_list =
       bpf_map_lookup_elem(&firewall_allowed_ips_map, &original_ip);
+
+  // Is the ip allowed for http/https ports?
+  bool ip_present_in_http_firewall_list =
+      bpf_map_lookup_elem(&firewall_allowed_http_ips_map, &original_ip);
 
   // Only destinations added to the firewall are allowed (or we're in log only
   // mode)
@@ -370,49 +391,55 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
     destination_allowed = true;
   }
 
+  bool is_http_proxy_port = (port == bpf_htons(const_http_proxy_port) ||
+                             port == bpf_htons(const_https_proxy_port));
+
+  bool is_redirected_to_http_proxy =
+      (iph.daddr == const_mitm_proxy_address && is_http_proxy_port);
+
+  if (is_redirected_to_http_proxy && ip_present_in_http_firewall_list) {
+    destination_allowed = true;
+  }
+
   // Only allow the http request through to the http proxy if the destination of
   // the packet is allowed. This gives us defense in depth. DNS must add allowed
   // IP, Packet validates it's allowed then it gets through to the http proxy
   // which can validate the url
-  if (destination_allowed) {
-    if (iph.daddr == const_mitm_proxy_address &&
-        (port == bpf_htons(const_http_proxy_port) ||
-         port == bpf_htons(const_https_proxy_port))) {
-      struct event info = {
-          .port = bpf_ntohs(port),
-          .allowed = true,
-          .ip = bpf_ntohl(iph.daddr),
-          .pid = pid ? *pid : 0,
-          .pidResolved = pid ? true : false,
-          .originalIp = bpf_ntohl(original_ip),
-          .hasBeenRedirected = isRedirectedByToOurProxy,
-          .eventType = HTTP_PROXY_PACKET_BYPASS_TYPE,
-      };
+  if (destination_allowed && is_redirected_to_http_proxy) {
+    struct event info = {
+        .port = bpf_ntohs(port),
+        .allowed = true,
+        .ip = bpf_ntohl(iph.daddr),
+        .pid = pid ? *pid : 0,
+        .pid_resolved = pid ? true : false,
+        .original_ip = bpf_ntohl(original_ip),
+        .has_been_redirected = is_redirected_by_us,
+        .eventType = HTTP_PROXY_PACKET_BYPASS_TYPE,
+    };
 
-      bpf_ringbuf_output(&events, &info, sizeof(info), 0);
-      return EGRESS_ALLOW_PACKET;
-    }
+    bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+    return EGRESS_ALLOW_PACKET;
   }
 
   struct event info = {
       .port = bpf_ntohs(port),
       .ip = bpf_ntohl(iph.daddr),
-      .originalIp = bpf_ntohl(original_ip),
-      .hasBeenRedirected = isRedirectedByToOurProxy,
+      .original_ip = bpf_ntohl(original_ip),
+      .has_been_redirected = is_redirected_by_us,
       .allowed = destination_allowed,
       .eventType = 0,
   };
 
   info.pid = pid ? *pid : 0;
-  info.pidResolved = pid ? true : false;
+  info.pid_resolved = pid ? true : false;
   bpf_ringbuf_output(&events, &info, sizeof(info), 0);
   return destination_allowed;
 }
 
 // Helper functions used in eBPF programs
 
-__u16 getTransactionIdFromDnsHeader(struct __sk_buff *skb,
-                                    __u16 skbReadOffset) {
+__u16 get_transaction_id_from_dns_header(struct __sk_buff *skb,
+                                         __u16 skb_read_offset) {
   /* We want to correlate the DNS request to the PID that made it.
    * To do this we extract the transaction ID from the DNS header
    * then match it in the userspace DNS server.
@@ -438,7 +465,7 @@ __u16 getTransactionIdFromDnsHeader(struct __sk_buff *skb,
    * (8 bytes).
    */
   __u16 transaction_id;
-  if (bpf_skb_load_bytes(skb, skbReadOffset, &transaction_id,
+  if (bpf_skb_load_bytes(skb, skb_read_offset, &transaction_id,
                          sizeof(transaction_id)) < 0) {
     return 0;
   }

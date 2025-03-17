@@ -7,7 +7,15 @@ indent_twice="pr -to10"
 
 default_curl_args="-s --fail-with-body --output /dev/null --max-time 1"
 slow_curl_args="-s --fail-with-body --output /dev/null --max-time 5"
-really_slow_curl_args="-s --fail-with-body --output /dev/null --max-time 25"
+really_slow_curl_args="-v --fail-with-body --output /dev/null --max-time 25"
+
+assert_pid_still_running() {
+    local pid=$1
+    if ! ps -p $pid > /dev/null; then
+        echo "Process $pid is no longer running. Firewall crashed"
+        exit 1
+    fi
+}
 
 assert_exit_code() {
     local expected=$1

@@ -13,7 +13,7 @@ import (
 )
 
 type bpfEvent struct {
-	Pid               uint32
+	Pid               int32
 	Port              uint16
 	Allowed           bool
 	_                 [1]byte
@@ -77,12 +77,13 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	Events                   *ebpf.MapSpec `ebpf:"events"`
-	FirewallAllowedIpsMap    *ebpf.MapSpec `ebpf:"firewall_allowed_ips_map"`
-	SockClientToOriginalIp   *ebpf.MapSpec `ebpf:"sock_client_to_original_ip"`
-	SockClientToOriginalPort *ebpf.MapSpec `ebpf:"sock_client_to_original_port"`
-	SocketPidMap             *ebpf.MapSpec `ebpf:"socket_pid_map"`
-	SrcPortToSockClient      *ebpf.MapSpec `ebpf:"src_port_to_sock_client"`
+	Events                    *ebpf.MapSpec `ebpf:"events"`
+	FirewallAllowedHttpIpsMap *ebpf.MapSpec `ebpf:"firewall_allowed_http_ips_map"`
+	FirewallAllowedIpsMap     *ebpf.MapSpec `ebpf:"firewall_allowed_ips_map"`
+	SockClientToOriginalIp    *ebpf.MapSpec `ebpf:"sock_client_to_original_ip"`
+	SockClientToOriginalPort  *ebpf.MapSpec `ebpf:"sock_client_to_original_port"`
+	SocketPidMap              *ebpf.MapSpec `ebpf:"socket_pid_map"`
+	SrcPortToSockClient       *ebpf.MapSpec `ebpf:"src_port_to_sock_client"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -104,17 +105,19 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	Events                   *ebpf.Map `ebpf:"events"`
-	FirewallAllowedIpsMap    *ebpf.Map `ebpf:"firewall_allowed_ips_map"`
-	SockClientToOriginalIp   *ebpf.Map `ebpf:"sock_client_to_original_ip"`
-	SockClientToOriginalPort *ebpf.Map `ebpf:"sock_client_to_original_port"`
-	SocketPidMap             *ebpf.Map `ebpf:"socket_pid_map"`
-	SrcPortToSockClient      *ebpf.Map `ebpf:"src_port_to_sock_client"`
+	Events                    *ebpf.Map `ebpf:"events"`
+	FirewallAllowedHttpIpsMap *ebpf.Map `ebpf:"firewall_allowed_http_ips_map"`
+	FirewallAllowedIpsMap     *ebpf.Map `ebpf:"firewall_allowed_ips_map"`
+	SockClientToOriginalIp    *ebpf.Map `ebpf:"sock_client_to_original_ip"`
+	SockClientToOriginalPort  *ebpf.Map `ebpf:"sock_client_to_original_port"`
+	SocketPidMap              *ebpf.Map `ebpf:"socket_pid_map"`
+	SrcPortToSockClient       *ebpf.Map `ebpf:"src_port_to_sock_client"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.Events,
+		m.FirewallAllowedHttpIpsMap,
 		m.FirewallAllowedIpsMap,
 		m.SockClientToOriginalIp,
 		m.SockClientToOriginalPort,

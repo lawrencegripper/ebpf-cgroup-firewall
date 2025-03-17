@@ -49,10 +49,17 @@ func (d *DomainList) String() string {
 // Ensure the interface is implemented
 var _ DnsFirewall = &EgressFirewall{}
 
+type AddIPType int
+
+const (
+	ViaHttpProxyOnly AddIPType = 1
+	ViaAnyPort       AddIPType = 2
+)
+
 // DnsFirewall is an interface for the DNS proxy
 type DnsFirewall interface {
-	AllowIPThroughFirewall(ip string, reason *models.RuleSource) error
-	GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error)
+	AllowIPThroughFirewall(ip string, ipType AddIPType, reason *models.RuleSource) error
+	GetPidFromDNSTransactionId(dnsTransactionId uint16) (int32, error)
 	GetFirewallMethod() models.FirewallMethod
 	TrackIPToDomain(ip string, domain string)
 }
@@ -67,7 +74,7 @@ type EgressFirewall struct {
 	FirewallIPsWithRuleSource *utils.GenericSyncMap[string, *models.RuleSource]
 	RingBufferReader          *ringbuf.Reader
 	FirewallMethod            models.FirewallMethod
-	dnsTransactionIdToPid     *utils.GenericSyncMap[uint16, uint32]
+	dnsTransactionIdToPid     *utils.GenericSyncMap[uint16, int32]
 	ipDomainTracking          *utils.GenericSyncMap[string, *DomainList]
 }
 
@@ -93,7 +100,7 @@ func (e *EgressFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
 	return pid, nil
 }
 
-func (e *EgressFirewall) GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error) {
+func (e *EgressFirewall) GetPidFromDNSTransactionId(dnsTransactionId uint16) (int32, error) {
 	// LoadAndDelete is used here so we don't have unbounded growth of the map
 	pid, ok := e.dnsTransactionIdToPid.LoadAndDelete(dnsTransactionId)
 	if !ok {
@@ -138,9 +145,13 @@ func (e *EgressFirewall) HostAndPortFromSourcePort(sourcePort int) (net.IP, int,
 
 // AllowIPThroughFirewall adds an IP to the FirewallAllowedIpsMap in ebpf
 // which causes the cgroup_egress program to allow requests outbound to that ip
-func (e *EgressFirewall) AllowIPThroughFirewall(ip string, reason *models.RuleSource) error {
+func (e *EgressFirewall) AllowIPThroughFirewall(ip string, ipType AddIPType, reason *models.RuleSource) error {
 	slog.Debug("Adding IP to firewall_ips_map", "ip", ip, slog.String("reason", reason.Comment), slog.String("kind", reason.KindHumanReadable()))
 	firewallIps := e.Objects.bpfMaps.FirewallAllowedIpsMap
+	if ipType == ViaHttpProxyOnly {
+		// Only allow HTTP traffic
+		firewallIps = e.Objects.bpfMaps.FirewallAllowedHttpIpsMap
+	}
 
 	err := firewallIps.Put(models.IPToIntNetworkOrder(ip), models.IPToIntNetworkOrder(ip))
 	if err != nil {
@@ -324,7 +335,7 @@ func AttachRedirectorToCGroup(
 		Objects:                   &obj,
 		RingBufferReader:          ringBufferEventsReader,
 		FirewallMethod:            firewallMethod,
-		dnsTransactionIdToPid:     new(utils.GenericSyncMap[uint16, uint32]),
+		dnsTransactionIdToPid:     new(utils.GenericSyncMap[uint16, int32]),
 		ipDomainTracking:          new(utils.GenericSyncMap[string, *DomainList]),
 		FirewallIPsWithRuleSource: new(utils.GenericSyncMap[string, *models.RuleSource]),
 	}

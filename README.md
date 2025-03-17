@@ -28,6 +28,35 @@ Try it out, here are some examples
 
 To use HTTPS interception you first need to [run `mkcert --install`](https://github.com/FiloSottile/mkcert) to create a root CA for intercepting and decoding HTTPS requests. This is already done for you in the devcontainer if you'd like to try it out there.
 
+### Allow `https://github.com/lawrencegripper` only but no other github traffic
+
+Here was allow only the HTTP traffic on specfic url `https://github.com/lawrencegripper`:
+
+`./bin/ebpf-cgroup-firewall run --allow-list 'https://github.com/lawrencegripper' "curl https://github.com/lawrencegripper"`
+
+The request suceeeds ✅
+
+If we try another url `https://github.com/github`:
+
+`./bin/ebpf-cgroup-firewall run --allow-list 'https://github.com/lawrencegripper' "curl https://github.com/github"`
+
+The request fails ❌
+
+The firewall detects that you are only asking for HTTP traffic so will also block any non-http traffic to that domain.
+
+`./bin/ebpf-cgroup-firewall run --allow-list 'https://github.com/lawrencegripper' "nc -zv -w 1 github.com 22"`
+
+Here, connecting to the SSH port, when only that url is allowed, is blocked ❌
+
+### Block `google.com`
+
+This will block any connections on any ports to `google.com`
+
+`./ebpf-cgroup-firewall run --block-list google.com "curl google.com"`
+
+> WARN DNS BLOCKED reason=FromDNSRequest explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com. pid=266767 cmd="curl google.com " firewallMethod=blocklist
+>
+
 ### Attach to a Docker Container and block calling `yahoo.com` from the container
 
 1. Start a container `docker run --name=test-container -it ghcr.io/curl/curl-container/curl-dev-debian:master /bin/bash`
@@ -37,12 +66,6 @@ To use HTTPS interception you first need to [run `mkcert --install`](https://git
 4. Run `curl bing.com` inside the container and observe it's allowed
 
 ![blocking yahoo.co.uk inside a container](./docs/container-example.png)
-
-### Block `google.com`
-
-`./ebpf-cgroup-firewall run --block-list google.com "curl google.com"`
-
-> WARN DNS BLOCKED reason=FromDNSRequest explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com. pid=266767 cmd="curl google.com " firewallMethod=blocklist
 
 ### Allow mix of DNS and IP Addresses
 
@@ -91,16 +114,18 @@ Here we see `ebpf-cgroup-firewall attach` in one terminal and the `curl` in anot
 
     > WARN Packet BLOCKED blockedAt=packet blocked=true ip=142.250.187.206 ipResolvedForDomains=google.com. pid=52061 cmd="curl -s --max-time 1 google.com " reason=FromDNSRequest explaination="Matched Domain Prefix: google.com" firewallMethod=blocklist
 
+4. The HTTP Proxy will evaluate if any URLs where in the allow/block list and either proxy them to their destination of deny them.
+
 ## Logs
 
 The firewall provides detailed logging for different types of requests:
 
 - DNS
-   `{"time":"2025-03-14T12:53:08.600372446Z","level":"WARN","msg":"BLOCKED","because":"NotInAllowList","blocked":true,"blockedAt":"dns","domains":"google.com.","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Domain matched blocklist prefix: google.com","pid":0,"port":"53","ip":"","originalIp":"unknown","url":"","cmd":"some-command"}`
+   `{"time":"2025-03-14T12:53:08.600372446Z","level":"WARN","msg":"DNS BLOCKED","because":"NotInAllowList","blocked":true,"blockedAt":"dns","domains":"google.com.","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Domain matched blocklist prefix: google.com","pid":0,"port":"53","ip":"","originalIp":"unknown","url":"","cmd":"some-command"}`
 - HTTP/S
-   `{"time":"2025-03-14T12:55:55.10990631Z","level":"WARN","msg":"BLOCKED","because":"MatchedBlockListDomain","blocked":true,"blockedAt":"http","domains":"bing.com","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Matched URL Prefix: https://bing.com/bob","pid":351020,"port":"","ip":"","originalIp":"","url":"https://bing.com/bob","cmd":"curl -s --fail-with-body --output /dev/null --max-time 5 https://bing.com/bob "}`
+   `{"time":"2025-03-14T12:55:55.10990631Z","level":"WARN","msg":"HTTP BLOCKED","because":"MatchedBlockListDomain","blocked":true,"blockedAt":"http","domains":"bing.com","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Matched URL Prefix: https://bing.com/bob","pid":351020,"port":"","ip":"","originalIp":"","url":"https://bing.com/bob","cmd":"curl -s --fail-with-body --output /dev/null --max-time 5 https://bing.com/bob "}`
 - Packet 
-   `{"time":"2025-03-14T12:51:09.104331257Z","level":"WARN","msg":"BLOCKED","because":"IPNotAllowed","blocked":true,"blockedAt":"packet","domains":"None","ruleSource":"Unknown","ruleSourceComment":"Unknown","pid":0,"port":"80","ip":"96.7.128.175","originalIp":"96.7.128.175","url":"","cmd":"unknown"}`
+   `{"time":"2025-03-14T12:51:09.104331257Z","level":"WARN","msg":"PACKET BLOCKED","because":"IPNotAllowed","blocked":true,"blockedAt":"packet","domains":"None","ruleSource":"Unknown","ruleSourceComment":"Unknown","pid":0,"port":"80","ip":"96.7.128.175","originalIp":"96.7.128.175","url":"","cmd":"unknown"}`
 
 See [./pkg/logging/request.go](./pkg/logger/request.go) for details on the fields that
 are available.
@@ -109,6 +134,8 @@ With the `--log-file` parameter these are outputted to JSON so can be parsed wit
 get detailed information.
 
 Logs include correlating the request back to the `pid` and `cmdline` which caused it to be made, along with `ruleSource` and `ruleSourceComment` which explain why it was blocked.
+
+`pid` will be `-1` if the eBPF has been unable to correlate the request to a process.
 
 ### Examples
 

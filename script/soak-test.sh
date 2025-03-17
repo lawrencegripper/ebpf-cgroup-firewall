@@ -5,10 +5,11 @@ set -eu
 # Kill the ebpf-cgroup-firewall process if there are any running already
 ps aux | grep './bin/ebpf-cgroup-firewall' | grep -v grep | awk '{print $2}' | xargs --no-run-if-empty kill
 
-log_file="/tmp/firewall-${RANDOM}.json"
+log_file="./tmp/firewall.jsonl"
+rm -rf $log_file
 pid=""
 source "$(dirname "$0")/helpers.sh"
-trap "echo 'Script failed. Outputting logs:'; sleep 1; cat $log_file; kill $pid" ERR
+trap "echo 'Script failed. Outputting logs:'; assert_pid_still_running $pid; sleep 1; kill $pid" ERR
 
 end_time=$((SECONDS + 900)) # 15 minutes from now
 
@@ -23,9 +24,10 @@ run_test_command() {
     # echo $cmdOutput
 }
 
+# Using https://httpbingo.org/
 ./bin/ebpf-cgroup-firewall attach \
-    --log-file $log_file \
-    --allow-list google.com,bing.com,https://bbc.co.uk/news/politics \
+    --log-file "$log_file" \
+    --allow-list google.com,https://httpbingo.org/anything/allowed \
     --allow-dns-request &
 # Capture the PID of the background process
 pid=$!
@@ -34,34 +36,50 @@ sleep 5
 
 echo "Firewall pid: $pid"
 
-
 while [ $SECONDS -lt $end_time ]; do
-    open_fold "Parallel Test (Allow): Multiple HTTPS requests to allowed endpoints"
-        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://google.com https://bing.com https://bbc.co.uk/news/politics"
+    open_fold "Curl (Allow): HTTPS requuest to google"
+        run_test_command "curl $really_slow_curl_args https://google.com"
+        assert_pid_still_running $pid
         assert_exit_code 0
     close_fold
 
-    open_fold "Parallel Test (Allow): Multiple HTTPS requests to denied endpoints"
-        run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://bbc.co.uk/news https://bbc.co.uk/news/world https://bbc.co.uk/news/uk"
+    open_fold "Curl (Allow): HTTP requuest to google"
+        run_test_command "curl $really_slow_curl_args http://google.com"
+        assert_pid_still_running $pid
+        assert_exit_code 0
+    close_fold
+
+    open_fold "Curl (Allow): Request nested endpoint"
+        run_test_command "curl $really_slow_curl_args https://httpbingo.org/anything/allowed/nested/path"
+        assert_pid_still_running $pid
+        assert_exit_code 0
+    close_fold
+
+    open_fold "Curl (Deny): HTTP request to denied endpoint"
+        run_test_command "curl $really_slow_curl_args http://httpbingo.org/anything/denied"
+        assert_pid_still_running $pid
         assert_exit_code 22
     close_fold
 
-    open_fold "Soak Test: Allow smtp.google.com:25 (SMTP)"
+    open_fold "Curl (Deny): HTTPS request to denied endpoint"
+        run_test_command "curl $really_slow_curl_args https://httpbingo.org/anything/also-denied"
+        assert_pid_still_running $pid
+        assert_exit_code 22
+    close_fold
+
+    open_fold "SSH (Allow): smtp.google.com:25 (SMTP)"
         run_test_command "nc -zv -w 1 smtp.google.com 25"
+        assert_pid_still_running $pid
         assert_exit_code 0
     close_fold
 
-    # TODO: This is a foot gun, if we enable a url it should only enable for port 80 and 443 not open
-    # up the whole domain for any non http traffic
-    # open_fold "Soak Test: Allow SSH to GitHub (SSH) because domain is enabled automatically by full url"
-    #     run_test_command "nc -zv -w 1 github.com 22"
-    #     assert_exit_code 0
-    # close_fold
-
-    open_fold "Soak Test: Block SSH to sourceforge (SSH) as not allowed"
+    open_fold "SSH (Deny): Block SSH to sourceforge (SSH) as not allowed"
         run_test_command "nc -zv -w 1 test.git.sourceforge.net 22"
+        assert_pid_still_running $pid
         assert_exit_code 1
     close_fold
 done
+
+assert_pid_still_running $pid
 
 echo "Script finished"
