@@ -300,22 +300,6 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
   __u32 original_ip = original_ip_ptr ? *original_ip_ptr : destination_ip;
   bool is_redirected_by_us = original_ip != iph.daddr;
 
-  // Block IPv6 traffic. Currently not supported.
-  if (skb->family == AF_INET6) {
-    struct event info = {
-        .port = -1,
-        .allowed = false,
-        .ip = bpf_ntohl(iph.daddr),
-        .pid = pid_or_default,
-        .pid_resolved = pid ? true : false,
-        .original_ip = bpf_ntohl(original_ip),
-        .has_been_redirected = is_redirected_by_us,
-        .eventType = PACKET_IPV6_TYPE,
-    };
-    
-    return EGRESS_DENY_PACKET;
-  }
-
   // Allow traffic if original address was to localhost
   if (original_ip == ADDRESS_LOCALHOST_NETBYTEORDER) {
     struct event info = {
@@ -385,6 +369,22 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
       return EGRESS_DENY_PACKET;
     }
     port = tcp.dest;
+  }
+
+  // Block IPv6 traffic. Currently not supported.
+  if (skb->family == AF_INET6) {
+    struct event info = {
+        .port = port,
+        .allowed = false,
+        .ip = bpf_ntohl(iph.daddr),
+        .pid = pid_or_default,
+        .pid_resolved = pid ? true : false,
+        .original_ip = bpf_ntohl(original_ip),
+        .has_been_redirected = is_redirected_by_us,
+        .eventType = PACKET_IPV6_TYPE,
+    };
+
+    return EGRESS_DENY_PACKET;
   }
 
   // Check if the destination IPs are in "blocked" map
