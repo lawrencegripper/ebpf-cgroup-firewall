@@ -121,11 +121,11 @@ Here we see `ebpf-cgroup-firewall attach` in one terminal and the `curl` in anot
 The firewall provides detailed logging for different types of requests:
 
 - DNS
-   `{"time":"2025-03-14T12:53:08.600372446Z","level":"WARN","msg":"BLOCKED","because":"NotInAllowList","blocked":true,"blockedAt":"dns","domains":"google.com.","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Domain matched blocklist prefix: google.com","pid":0,"port":"53","ip":"","originalIp":"unknown","url":"","cmd":"some-command"}`
+   `{"time":"2025-03-14T12:53:08.600372446Z","level":"WARN","msg":"DNS BLOCKED","because":"NotInAllowList","blocked":true,"blockedAt":"dns","domains":"google.com.","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Domain matched blocklist prefix: google.com","pid":0,"port":"53","ip":"","originalIp":"unknown","url":"","cmd":"some-command"}`
 - HTTP/S
-   `{"time":"2025-03-14T12:55:55.10990631Z","level":"WARN","msg":"BLOCKED","because":"MatchedBlockListDomain","blocked":true,"blockedAt":"http","domains":"bing.com","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Matched URL Prefix: https://bing.com/bob","pid":351020,"port":"","ip":"","originalIp":"","url":"https://bing.com/bob","cmd":"curl -s --fail-with-body --output /dev/null --max-time 5 https://bing.com/bob "}`
+   `{"time":"2025-03-14T12:55:55.10990631Z","level":"WARN","msg":"HTTP BLOCKED","because":"MatchedBlockListDomain","blocked":true,"blockedAt":"http","domains":"bing.com","ruleSource":"MatchedBlockListDomain","ruleSourceComment":"Matched URL Prefix: https://bing.com/bob","pid":351020,"port":"","ip":"","originalIp":"","url":"https://bing.com/bob","cmd":"curl -s --fail-with-body --output /dev/null --max-time 5 https://bing.com/bob "}`
 - Packet 
-   `{"time":"2025-03-14T12:51:09.104331257Z","level":"WARN","msg":"BLOCKED","because":"IPNotAllowed","blocked":true,"blockedAt":"packet","domains":"None","ruleSource":"Unknown","ruleSourceComment":"Unknown","pid":0,"port":"80","ip":"96.7.128.175","originalIp":"96.7.128.175","url":"","cmd":"unknown"}`
+   `{"time":"2025-03-14T12:51:09.104331257Z","level":"WARN","msg":"PACKET BLOCKED","because":"IPNotAllowed","blocked":true,"blockedAt":"packet","domains":"None","ruleSource":"Unknown","ruleSourceComment":"Unknown","pid":0,"port":"80","ip":"96.7.128.175","originalIp":"96.7.128.175","url":"","cmd":"unknown"}`
 
 See [./pkg/logging/request.go](./pkg/logger/request.go) for details on the fields that
 are available.
@@ -134,6 +134,8 @@ With the `--log-file` parameter these are outputted to JSON so can be parsed wit
 get detailed information.
 
 Logs include correlating the request back to the `pid` and `cmdline` which caused it to be made, along with `ruleSource` and `ruleSourceComment` which explain why it was blocked.
+
+`pid` will be `-1` if the eBPF has been unable to correlate the request to a process.
 
 ### Examples
 
