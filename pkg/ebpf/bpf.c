@@ -31,12 +31,14 @@ struct event {
 struct event *unused __attribute__((unused));
 
 // These consts are used to identify what kind of evens
+// REMEMBER: Update pkg/ebpf/events.go when adding new event types
 const __u16 DNS_PROXY_PACKET_BYPASS_TYPE = 1;
 const __u16 DNS_REDIRECT_TYPE = 11;
 const __u16 LOCALHOST_PACKET_BYPASS_TYPE = 12;
 const __u16 HTTP_PROXY_PACKET_BYPASS_TYPE = 2;
 const __u16 HTTP_REDIRECT_TYPE = 22;
 const __u16 PROXY_PID_BYPASS_TYPE = 23;
+const __u16 PACKET_IPV6_TYPE = 24;
 
 // These are real consts to help with reability only
 
@@ -298,8 +300,24 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
   __u32 original_ip = original_ip_ptr ? *original_ip_ptr : destination_ip;
   bool is_redirected_by_us = original_ip != iph.daddr;
 
+  // Block IPv6 traffic. Currently not supported.
+  if (skb->family == AF_INET6) {
+    struct event info = {
+        .port = -1,
+        .allowed = false,
+        .ip = bpf_ntohl(iph.daddr),
+        .pid = pid_or_default,
+        .pid_resolved = pid ? true : false,
+        .original_ip = bpf_ntohl(original_ip),
+        .has_been_redirected = is_redirected_by_us,
+        .eventType = PACKET_IPV6_TYPE,
+    };
+    
+    return EGRESS_DENY_PACKET;
+  }
+
   // Allow traffic if original address was to localhost
-  if (original_ip == const_mitm_proxy_address) {
+  if (original_ip == ADDRESS_LOCALHOST_NETBYTEORDER) {
     struct event info = {
         .port = -1,
         .allowed = true,
@@ -332,8 +350,6 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
     }
 
     port = udp.uh_dport;
-
-    // return EGRESS_ALLOW_PACKET;
 
     bool is_proxied_dns_request =
         udp.uh_dport == bpf_htons(const_dns_proxy_port) &&

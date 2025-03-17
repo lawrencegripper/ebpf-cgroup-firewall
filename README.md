@@ -22,6 +22,8 @@ For each url, dns request or packet this means it has:
 - The IP requested and which DNS request resolved to it `pid=56253 cmd="curl --max-time 1 1.1.1.1 || curl google.com "`
 - Why the decision was made ie. `explaination="Matched Domain Prefix: google.com" blocked=true blockedAt=dns domain=google.com`
 
+> Note: Currently we do not support IPv6 and drop all `AAAA` records from DNS then block any `AF_INET6` requests in egress.
+
 ## Example Usage
 
 Try it out, here are some examples
@@ -127,8 +129,7 @@ The firewall provides detailed logging for different types of requests:
 - Packet 
    `{"time":"2025-03-14T12:51:09.104331257Z","level":"WARN","msg":"PACKET BLOCKED","because":"IPNotAllowed","blocked":true,"blockedAt":"packet","domains":"None","ruleSource":"Unknown","ruleSourceComment":"Unknown","pid":0,"port":"80","ip":"96.7.128.175","originalIp":"96.7.128.175","url":"","cmd":"unknown"}`
 
-See [./pkg/logging/request.go](./pkg/logger/request.go) for details on the fields that
-are available.
+See [./pkg/logging/request.go](./pkg/logger/request.go) for details on the fields that are available. For example, `because` has a [set of defined values](https://github.com/lawrencegripper/ebpf-cgroup-firewall/blob/474012ed809ad12c333732a5a1b61a5369d6e630/pkg/logger/request.go#L32-L38).
 
 With the `--log-file` parameter these are outputted to JSON so can be parsed with `jq` to
 get detailed information.
