@@ -384,6 +384,8 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
         .eventType = PACKET_IPV6_TYPE,
     };
 
+    bpf_ringbuf_output(&events, &info, sizeof(info), 0);
+
     return EGRESS_DENY_PACKET;
   }
 
