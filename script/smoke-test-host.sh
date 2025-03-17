@@ -9,7 +9,7 @@ source "$(dirname "$0")/helpers.sh"
 
 # Why on host only?
 # Docker doesn't configure ipv6 by default, so we can't test it in the container
-if [ -z "${GITHUB_ACTIONS-}" ]; then
+if [ -z "${SKIP_IPV6-}" ]; then
     # Actions doesn't support ipv6 so can't run that test
     open_fold "IPv6: Block IPv6 Traffic as not supported in the proxy currently (Allow DNS)"
         ipv6_address=$(dig hostname A ifconfig.co AAAA +short | tail -n 1)

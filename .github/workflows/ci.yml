@@ -35,3 +35,6 @@ jobs:
     # These tests can't be run in the devcontainer as rely on the host cgroup mapping for docker attach
     - name: Run host only smoketests
       run: sudo ./script/smoke-test-host.sh
+      env:
+        # Actions doesn't support ipv6 so can't run that test
+        SKIP_IPV6: true
