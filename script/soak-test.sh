@@ -5,7 +5,8 @@ set -eu
 # Kill the ebpf-cgroup-firewall process if there are any running already
 ps aux | grep './bin/ebpf-cgroup-firewall' | grep -v grep | awk '{print $2}' | xargs --no-run-if-empty kill
 
-log_file="/tmp/firewall-${RANDOM}.json"
+log_file="/tmp/firewall.jsonl"
+rm -rf $log_file
 pid=""
 source "$(dirname "$0")/helpers.sh"
 trap "echo 'Script failed. Outputting logs:'; sleep 1; cat $log_file; kill $pid" ERR

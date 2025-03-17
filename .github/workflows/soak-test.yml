@@ -24,3 +24,12 @@ jobs:
         with:
           push: never
           runCmd: make soaktest
+
+      - name: Upload firewall logs as artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: firewall-logs
+          path: /tmp/firewall.jsonl
+          retention-days: 5
