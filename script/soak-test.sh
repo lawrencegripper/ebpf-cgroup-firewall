@@ -36,27 +36,37 @@ echo "Firewall pid: $pid"
 
 
 while [ $SECONDS -lt $end_time ]; do
-    open_fold "Parallel Test (Allow): Multiple HTTPS requests to allowed endpoints"
-        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://google.com https://httpbin.org/anything/allowed"
+    open_fold "Curl (Allow): HTTPS requuest to google"
+        run_test_command "curl $really_slow_curl_args https://google.com"
+        assert_exit_code 0
+    close_fold
+
+    open_fold "Curl (Allow): HTTP requuest to google"
+        run_test_command "curl $really_slow_curl_args http://google.com"
         assert_exit_code 0
     close_fold
 
     open_fold "Curl (Allow): Request nested endpoint"
-        run_test_command "curl $really_slow_curl_args https://google.com https://httpbin.org/anything/allowed/nested/path"
+        run_test_command "curl $really_slow_curl_args https://httpbin.org/anything/allowed/nested/path"
         assert_exit_code 0
     close_fold
 
-    open_fold "Parallel Test (Allow): Multiple HTTPS requests to denied endpoints"
-        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://httpbin.org/anything/also-denied https://httpbin.org/anything/still-denied"
+    open_fold "Curl (Deny): HTTP request to denied endpoint"
+        run_test_command "curl $really_slow_curl_args http://httpbin.org/anything/denied"
         assert_exit_code 22
     close_fold
 
-    open_fold "Soak Test: Allow smtp.google.com:25 (SMTP)"
+    open_fold "Curl (Deny): HTTPS request to denied endpoint"
+        run_test_command "curl $really_slow_curl_args https://httpbin.org/anything/also-denied"
+        assert_exit_code 22
+    close_fold
+
+    open_fold "SSH (Allow): smtp.google.com:25 (SMTP)"
         run_test_command "nc -zv -w 1 smtp.google.com 25"
         assert_exit_code 0
     close_fold
 
-    open_fold "Soak Test: Block SSH to sourceforge (SSH) as not allowed"
+    open_fold "SSH (Deny): Block SSH to sourceforge (SSH) as not allowed"
         run_test_command "nc -zv -w 1 test.git.sourceforge.net 22"
         assert_exit_code 1
     close_fold
