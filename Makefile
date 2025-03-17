@@ -47,6 +47,6 @@ ci: generate lint test smoketest ## Run CI (lint, generate, test, smoketest)
 
 .PHONY: release
 release: ## Create a release
-	git tag -a v0.0.3 -m "Alpha 2"; git push origin "v0.0.3"
+	git tag -a v0.0.5 -m "Alpha 5"; git push origin "v0.0.5"
 	goreleaser release --clean
 	
