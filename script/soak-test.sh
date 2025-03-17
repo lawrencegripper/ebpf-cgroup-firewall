@@ -25,7 +25,7 @@ run_test_command() {
 
 ./bin/ebpf-cgroup-firewall attach \
     --log-file $log_file \
-    --allow-list google.com,bing.com,https://bbc.co.uk/news/politics \
+    --allow-list google.com,https://httpbin.org/anything/allowed \
     --allow-dns-request &
 # Capture the PID of the background process
 pid=$!
@@ -37,12 +37,12 @@ echo "Firewall pid: $pid"
 
 while [ $SECONDS -lt $end_time ]; do
     open_fold "Parallel Test (Allow): Multiple HTTPS requests to allowed endpoints"
-        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://google.com https://bing.com https://bbc.co.uk/news/politics"
+        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://google.com https://httpbin.org/anything/allowed https://httpbin.org/anything/allowed/nested/path"
         assert_exit_code 0
     close_fold
 
     open_fold "Parallel Test (Allow): Multiple HTTPS requests to denied endpoints"
-        run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://bbc.co.uk/news https://bbc.co.uk/news/world https://bbc.co.uk/news/uk"
+        run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 25 https://bing.com/denied https://httpbin.org/anything/also-denied https://httpbin.org/anything/still-denied"
         assert_exit_code 22
     close_fold
 
