@@ -48,6 +48,10 @@ func CmdLineFromPid(pid int) string {
 		return "unknown, pid is -1"
 	}
 
+	if pid == 0 {
+		return "root process (pid 0)"
+	}
+
 	// Lookup the processPath for the event
 	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
 	cmdlineBytes, err := os.ReadFile(cmdlinePath)
