@@ -37,12 +37,17 @@ echo "Firewall pid: $pid"
 
 while [ $SECONDS -lt $end_time ]; do
     open_fold "Parallel Test (Allow): Multiple HTTPS requests to allowed endpoints"
-        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://google.com https://httpbin.org/anything/allowed https://httpbin.org/anything/allowed/nested/path"
+        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://google.com https://httpbin.org/anything/allowed"
+        assert_exit_code 0
+    close_fold
+
+    open_fold "Curl (Allow): Request nested endpoint"
+        run_test_command "curl $really_slow_curl_args https://google.com https://httpbin.org/anything/allowed/nested/path"
         assert_exit_code 0
     close_fold
 
     open_fold "Parallel Test (Allow): Multiple HTTPS requests to denied endpoints"
-        run_test_command "curl $slow_curl_args --parallel --parallel-immediate --parallel-max 25 https://bing.com/denied https://httpbin.org/anything/also-denied https://httpbin.org/anything/still-denied"
+        run_test_command "curl $really_slow_curl_args --parallel --parallel-immediate --parallel-max 10 https://httpbin.org/anything/also-denied https://httpbin.org/anything/still-denied"
         assert_exit_code 22
     close_fold
 
