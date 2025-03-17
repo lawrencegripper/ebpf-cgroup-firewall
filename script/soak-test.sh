@@ -5,7 +5,7 @@ set -eu
 # Kill the ebpf-cgroup-firewall process if there are any running already
 ps aux | grep './bin/ebpf-cgroup-firewall' | grep -v grep | awk '{print $2}' | xargs --no-run-if-empty kill
 
-log_file="/tmp/firewall.jsonl"
+log_file="./tmp/firewall.jsonl"
 rm -rf $log_file
 pid=""
 source "$(dirname "$0")/helpers.sh"

@@ -31,5 +31,5 @@ jobs:
         continue-on-error: true
         with:
           name: firewall-logs
-          path: /tmp/firewall.jsonl
+          path: ./tmp/firewall.jsonl
           retention-days: 5
