@@ -20,7 +20,7 @@ func mockedBlockingFirewall(t *testing.T) *ebpf.MockDnsFirewall {
 	blockingFirewall.On("GetFirewallMethod").Return(models.BlockList).Maybe()
 	blockingFirewall.On("AllowIPThroughFirewall", mock.AnythingOfType("string"), mock.AnythingOfType("AddIPType"), mock.Anything).Return(nil).Maybe()
 	blockingFirewall.On("TrackIPToDomain", mock.Anything, mock.Anything).Maybe()
-	blockingFirewall.On("GetPidFromDNSTransactionId", mock.Anything).Return(uint32(0), nil).Maybe()
+	blockingFirewall.On("GetPidFromDNSTransactionId", mock.Anything).Return(int32(0), nil).Maybe()
 	return blockingFirewall
 }
 

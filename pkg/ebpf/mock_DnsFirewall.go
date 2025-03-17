@@ -114,22 +114,22 @@ func (_c *MockDnsFirewall_GetFirewallMethod_Call) RunAndReturn(run func() models
 }
 
 // GetPidFromDNSTransactionId provides a mock function with given fields: dnsTransactionId
-func (_m *MockDnsFirewall) GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error) {
+func (_m *MockDnsFirewall) GetPidFromDNSTransactionId(dnsTransactionId uint16) (int32, error) {
 	ret := _m.Called(dnsTransactionId)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetPidFromDNSTransactionId")
 	}
 
-	var r0 uint32
+	var r0 int32
 	var r1 error
-	if rf, ok := ret.Get(0).(func(uint16) (uint32, error)); ok {
+	if rf, ok := ret.Get(0).(func(uint16) (int32, error)); ok {
 		return rf(dnsTransactionId)
 	}
-	if rf, ok := ret.Get(0).(func(uint16) uint32); ok {
+	if rf, ok := ret.Get(0).(func(uint16) int32); ok {
 		r0 = rf(dnsTransactionId)
 	} else {
-		r0 = ret.Get(0).(uint32)
+		r0 = ret.Get(0).(int32)
 	}
 
 	if rf, ok := ret.Get(1).(func(uint16) error); ok {
@@ -159,12 +159,12 @@ func (_c *MockDnsFirewall_GetPidFromDNSTransactionId_Call) Run(run func(dnsTrans
 	return _c
 }
 
-func (_c *MockDnsFirewall_GetPidFromDNSTransactionId_Call) Return(_a0 uint32, _a1 error) *MockDnsFirewall_GetPidFromDNSTransactionId_Call {
+func (_c *MockDnsFirewall_GetPidFromDNSTransactionId_Call) Return(_a0 int32, _a1 error) *MockDnsFirewall_GetPidFromDNSTransactionId_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockDnsFirewall_GetPidFromDNSTransactionId_Call) RunAndReturn(run func(uint16) (uint32, error)) *MockDnsFirewall_GetPidFromDNSTransactionId_Call {
+func (_c *MockDnsFirewall_GetPidFromDNSTransactionId_Call) RunAndReturn(run func(uint16) (int32, error)) *MockDnsFirewall_GetPidFromDNSTransactionId_Call {
 	_c.Call.Return(run)
 	return _c
 }

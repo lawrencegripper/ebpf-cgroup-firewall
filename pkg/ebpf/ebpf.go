@@ -59,7 +59,7 @@ const (
 // DnsFirewall is an interface for the DNS proxy
 type DnsFirewall interface {
 	AllowIPThroughFirewall(ip string, ipType AddIPType, reason *models.RuleSource) error
-	GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error)
+	GetPidFromDNSTransactionId(dnsTransactionId uint16) (int32, error)
 	GetFirewallMethod() models.FirewallMethod
 	TrackIPToDomain(ip string, domain string)
 }
@@ -74,7 +74,7 @@ type EgressFirewall struct {
 	FirewallIPsWithRuleSource *utils.GenericSyncMap[string, *models.RuleSource]
 	RingBufferReader          *ringbuf.Reader
 	FirewallMethod            models.FirewallMethod
-	dnsTransactionIdToPid     *utils.GenericSyncMap[uint16, uint32]
+	dnsTransactionIdToPid     *utils.GenericSyncMap[uint16, int32]
 	ipDomainTracking          *utils.GenericSyncMap[string, *DomainList]
 }
 
@@ -100,7 +100,7 @@ func (e *EgressFirewall) PidFromSrcPort(sourcePort int) (uint32, error) {
 	return pid, nil
 }
 
-func (e *EgressFirewall) GetPidFromDNSTransactionId(dnsTransactionId uint16) (uint32, error) {
+func (e *EgressFirewall) GetPidFromDNSTransactionId(dnsTransactionId uint16) (int32, error) {
 	// LoadAndDelete is used here so we don't have unbounded growth of the map
 	pid, ok := e.dnsTransactionIdToPid.LoadAndDelete(dnsTransactionId)
 	if !ok {
@@ -335,7 +335,7 @@ func AttachRedirectorToCGroup(
 		Objects:                   &obj,
 		RingBufferReader:          ringBufferEventsReader,
 		FirewallMethod:            firewallMethod,
-		dnsTransactionIdToPid:     new(utils.GenericSyncMap[uint16, uint32]),
+		dnsTransactionIdToPid:     new(utils.GenericSyncMap[uint16, int32]),
 		ipDomainTracking:          new(utils.GenericSyncMap[string, *DomainList]),
 		FirewallIPsWithRuleSource: new(utils.GenericSyncMap[string, *models.RuleSource]),
 	}

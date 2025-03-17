@@ -264,6 +264,7 @@ int cgroup_skb_egress(struct __sk_buff *skb) {
   // Use the socket cookie to lookup the calling PID
   __u64 socket_cookie = bpf_get_socket_cookie(skb);
   __u32 *pid = bpf_map_lookup_elem(&socket_pid_map, &socket_cookie);
+  // Use -1 to signal that the pid wasn't found
   __u32 pid_or_default = pid ? *pid : -1;
 
   bool is_from_proxy_pid = pid_or_default == const_proxy_pid;

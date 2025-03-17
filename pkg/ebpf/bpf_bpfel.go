@@ -13,7 +13,7 @@ import (
 )
 
 type bpfEvent struct {
-	Pid               uint32
+	Pid               int32
 	Port              uint16
 	Allowed           bool
 	_                 [1]byte
