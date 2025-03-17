@@ -13,7 +13,6 @@ assert_pid_still_running() {
     local pid=$1
     if ! ps -p $pid > /dev/null; then
         echo "Process $pid is no longer running. Firewall crashed"
-        cat $log_file
         exit 1
     fi
 }

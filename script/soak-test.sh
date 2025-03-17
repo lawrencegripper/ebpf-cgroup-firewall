@@ -9,7 +9,7 @@ log_file="./tmp/firewall.jsonl"
 rm -rf $log_file
 pid=""
 source "$(dirname "$0")/helpers.sh"
-trap "echo 'Script failed. Outputting logs:'; assert_pid_still_running $pid; sleep 1; kill $pid; cat $log_file" ERR
+trap "echo 'Script failed. Outputting logs:'; assert_pid_still_running $pid; sleep 1; kill $pid" ERR
 
 end_time=$((SECONDS + 900)) # 15 minutes from now
 
@@ -33,8 +33,6 @@ run_test_command() {
 pid=$!
 
 sleep 5
-
-ls ./tmp/
 
 echo "Firewall pid: $pid"
 
